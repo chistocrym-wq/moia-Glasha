@@ -1,6 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";\nimport { AssistantAvatar, GlashaCharacter } from "@/components/GlashaCharacter";\nimport { InstallGlashaTile } from "@/components/PwaClient";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { AssistantAvatar, GlashaCharacter } from "@/components/GlashaCharacter";
+import { InstallGlashaTile } from "@/components/PwaClient";
 
 type SectionId =
   | "home" | "tasks" | "work" | "calendar" | "finance" | "health"
