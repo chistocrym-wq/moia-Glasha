@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";\nimport { AssistantAvatar, GlashaCharacter } from "@/components/GlashaCharacter";\nimport { InstallGlashaTile } from "@/components/PwaClient";
 
 type SectionId =
   | "home" | "tasks" | "work" | "calendar" | "finance" | "health"
@@ -69,12 +69,6 @@ function useStoredState<T>(key: string, initial: T) {
   return [value, setValue] as const;
 }
 
-function Glasha({ sprite = 0, compact = false }: { sprite?: number; compact?: boolean }) {
-  const col = sprite % 5;
-  const row = Math.floor(sprite / 5);
-  return <div className={`glasha ${compact ? "glashaCompact" : ""}`} aria-label="Глаша"
-    style={{ backgroundPosition: `${col * 25}% ${row * 100}%` }} />;
-}
 function Chip({ children }: { children: React.ReactNode }) { return <span className="chip">{children}</span>; }
 function InfoCard({ icon, title, text }: { icon: string; title: string; text: string }) {
   return <article className="infoCard"><span className="infoIcon">{icon}</span><div><h3>{title}</h3><p>{text}</p></div><span className="arrow">›</span></article>;
@@ -145,7 +139,7 @@ export default function Home() {
 
   return <main className="appShell">
     <aside className="sidebar">
-      <div className="brandRow"><div className="brandMark">Г</div><div><strong>Глаша</strong><span>мой личный помощник</span></div></div>
+      <div className="brandRow"><div className="brandAvatar"><AssistantAvatar className="brandAvatarImage" /></div><div><strong>Глаша</strong><span>мой личный помощник</span></div></div>
       <nav className="navList">{sections.map((item) =>
         <button key={item.id} className={active === item.id ? "navItem active" : "navItem"} onClick={() => setActive(item.id)}>
           <span className="navIcon">{item.icon}</span><span><b>{item.label}</b><small>{item.subtitle}</small></span>
@@ -155,7 +149,7 @@ export default function Home() {
 
     <section className="workspace">
       <header className="topbar"><div><p className="eyebrow">Твоя Глаша</p><h1>{active === "home" ? "Привет! Что держим под контролем?" : current.label}</h1></div>
-        <div className="topActions"><button className="ghostButton" onClick={() => setActive("quick")}>⌘ Быстрый доступ</button><div className="miniAvatar"><Glasha sprite={current.sprite} compact /></div></div>
+        <div className="topActions"><button className="ghostButton" onClick={() => setActive("quick")}>⌘ Быстрый доступ</button><div className="miniAvatar"><AssistantAvatar /></div></div>
       </header>
 
       {active === "home" ? <>
@@ -163,7 +157,7 @@ export default function Home() {
           <form className="commandBar" onSubmit={submitCommand}><button type="button" className={listening ? "micButton listening" : "micButton"} onClick={startVoice}>🎙</button>
             <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Например: в понедельник оплатить страховку…" /><button className="sendButton">Запомнить</button></form>
           <div className="promptHints"><button onClick={() => setCommand("Потратила 45 евро на продукты")}>+ расход</button><button onClick={() => setCommand("Напомни завтра позвонить врачу")}>+ напоминание</button><button onClick={() => setCommand("По работе проверить договор")}>+ работа</button></div>
-        </div><div className="heroGlasha"><Glasha sprite={9}/><span className="speechBubble">Я рядом ♡</span></div></section>
+        </div><div className="heroGlasha"><GlashaCharacter sprite={6} priority className="heroCharacter"/><span className="speechBubble">Я рядом ♡</span></div></section>
 
         <div className="overviewGrid">{todayOverview.map((x) => <article key={x.label} className={`statCard ${x.tone}`}><span>{x.label}</span><strong>{x.value}</strong></article>)}</div>
 
@@ -186,7 +180,7 @@ function SectionContent({ active, currentSprite, tasks, events, expenses, notes,
   onToggleTask:(id:string)=>void; onAddTask:(a?:Task["area"])=>void; onAddExpense:(a?:Expense["area"])=>void; onCommand:(t:string)=>void;
 }) {
   return <div className="sectionLayout">
-    <section className="sectionLead"><div><Chip>{sections.find(s=>s.id===active)?.label}</Chip><h2>{headline(active)}</h2><p>{description(active)}</p></div><div className="sectionGlasha"><Glasha sprite={currentSprite}/></div></section>
+    <section className="sectionLead"><div><Chip>{sections.find(s=>s.id===active)?.label}</Chip><h2>{headline(active)}</h2><p>{description(active)}</p></div><div className="sectionGlasha"><GlashaCharacter sprite={currentSprite} className="sectionCharacter"/></div></section>
 
     {(active==="tasks"||active==="work") && <section className="panel"><div className="panelHeader"><div><p className="eyebrow">{active==="work"?"Работа":"Личное + работа"}</p><h3>{active==="work"?"Текущие задачи":"Все дела"}</h3></div><button className="primaryButton" onClick={()=>onAddTask(active==="work"?"Работа":"Личное")}>+ Добавить</button></div>
       <div className="taskList">{tasks.filter(t=>active==="tasks"||t.area==="Работа").map(t=><button key={t.id} className={`taskRow ${t.done?"done":""}`} onClick={()=>onToggleTask(t.id)}><span className="checkCircle">{t.done?"✓":""}</span><span className="taskText"><b>{t.title}</b><small>{t.area}{t.time?` · ${t.time}`:""}</small></span><span>›</span></button>)}</div></section>}
@@ -201,7 +195,7 @@ function SectionContent({ active, currentSprite, tasks, events, expenses, notes,
 
     {active==="travel" && <div className="cardGrid"><InfoCard icon="✈" title="Билеты" text="Добавлять поездки и брони"/><InfoCard icon="▣" title="Отели" text="Хранить подтверждения"/><InfoCard icon="◫" title="Календарь поездок" text="Все даты автоматически"/><InfoCard icon="▤" title="Документы" text="Паспорт, страховка, визы"/></div>}
     {active==="documents" && <section className="panel"><div className="documentList">{[["Паспорт","Срок до 2031"],["ВНЖ","Срок до 2028"],["Медицинские документы","Анализы и заключения"],["Договоры","Рабочие и личные"],["Счета и квитанции","Оплаченные и будущие"]].map(([a,b])=><button className="documentRow" key={a}><span className="docIcon">▤</span><span><b>{a}</b><small>{b}</small></span><span>›</span></button>)}</div></section>}
-    {active==="quick" && <div className="quickGrid">{[["🏦","Банк"],["▣","Госуслуги"],["✉","Почта"],["◫","Календарь"],["✈","Билеты"],["⌖","Карты"],["文","Переводчик"],["A1","Тренажёр"],["▶","Видео"],["💬","Telegram"],["☁","Диск"],["+","Добавить"]].map(([i,n])=><button className="quickTile" key={n}><span>{i}</span><b>{n}</b></button>)}</div>}
+    {active==="quick" && <div className="quickGrid"><InstallGlashaTile />{[["🏦","Банк"],["▣","Госуслуги"],["✉","Почта"],["◫","Календарь"],["✈","Билеты"],["⌖","Карты"],["文","Переводчик"],["A1","Тренажёр"],["▶","Видео"],["💬","Telegram"],["☁","Диск"],["+","Добавить"]].map(([i,n])=><button className="quickTile" key={n}><span>{i}</span><b>{n}</b></button>)}</div>}
     {active==="advisor" && <section className="panel advisorPanel"><h3>Что нужно найти или решить?</h3><p>Здесь Глаша сможет обращаться к поиску, сравнивать варианты, разбирать документы и помогать с юридическими вопросами.</p><div className="advisorButtons"><button onClick={()=>onCommand("Найди варианты и сравни их")}>Найти информацию</button><button onClick={()=>onCommand("Помоги разобраться с документом")}>Разобрать документ</button><button onClick={()=>onCommand("Сравни варианты и объясни различия")}>Сравнить варианты</button></div><div className="legalNotice">Юридический раздел помогает ориентироваться и готовить вопросы, но не заменяет профессионального юриста.</div></section>}
     {active==="chat" && <div className="twoColumns"><section className="panel"><p className="eyebrow">Разговор</p><h3>Можно просто выговориться</h3><p className="muted">Глаша сохранит важное и поможет разложить ситуацию на факты, решения и следующие шаги.</p><button className="primaryButton" onClick={()=>onCommand("Мне нужно выгрузить мысли и разобраться")}>Начать разговор</button></section><section className="panel"><p className="eyebrow">Входящие мысли</p><h3>{notes.length} сохранено</h3>{notes.length?notes.slice().reverse().slice(0,5).map(n=><div className="noteRow" key={n.id}>{n.text}</div>):<p className="muted">Пока пусто. Скажи любую мысль на главном экране.</p>}</section></div>}
   </div>;
