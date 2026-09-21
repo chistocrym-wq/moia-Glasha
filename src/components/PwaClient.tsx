@@ -64,7 +64,7 @@ export function InstallGlashaTile() {
     const listener = () => rerender((value) => value + 1);
     subscribers.add(listener);
     installed = installed || isStandalone();
-    return () => subscribers.delete(listener);
+    return () => { subscribers.delete(listener); };
   }, []);
 
   async function install() {
