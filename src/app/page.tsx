@@ -21,10 +21,10 @@ type WindowWithSpeech = Window & { SpeechRecognition?: SpeechRecognitionCtor; we
 
 const sections: Array<{ id: SectionId; label: string; icon: string; subtitle: string; sprite: number }> = [
   { id: "home", label: "Главная", icon: "⌂", subtitle: "Всё важное сейчас", sprite: 9 },
-  { id: "tasks", label: "Мои дела", icon: "✓", subtitle: "Личное и бытовое", sprite: 0 },
-  { id: "work", label: "Работа", icon: "▣", subtitle: "Проекты и задачи", sprite: 1 },
+  { id: "tasks", label: "Мои дела", icon: "✓", subtitle: "Личное и бытовое", sprite: 9 },
+  { id: "work", label: "Работа", icon: "▣", subtitle: "Проекты и задачи", sprite: 5 },
   { id: "calendar", label: "Календарь", icon: "◫", subtitle: "События и напоминания", sprite: 2 },
-  { id: "finance", label: "Финансы", icon: "₽", subtitle: "Личные и рабочие", sprite: 6 },
+  { id: "finance", label: "Финансы", icon: "₽", subtitle: "Личные и рабочие", sprite: 1 },
   { id: "health", label: "Здоровье", icon: "♡", subtitle: "Самочувствие и цикл", sprite: 3 },
   { id: "learning", label: "Обучение", icon: "◉", subtitle: "Языки и развитие", sprite: 0 },
   { id: "travel", label: "Поездки", icon: "✈", subtitle: "Билеты и планы", sprite: 2 },
