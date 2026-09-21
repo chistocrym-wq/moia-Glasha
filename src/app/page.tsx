@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type SectionId =
   | "home" | "tasks" | "work" | "calendar" | "finance" | "health"
@@ -52,15 +52,20 @@ const initialExpenses: Expense[] = [
 
 function useStoredState<T>(key: string, initial: T) {
   const [value, setValue] = useState<T>(initial);
-  const hydrated = useRef(false);
+  const [hydrated, setHydrated] = useState(false);
+
   useEffect(() => {
     const raw = window.localStorage.getItem(key);
-    if (raw) { try { setValue(JSON.parse(raw) as T); } catch {} }
-    hydrated.current = true;
+    if (raw) {
+      try { setValue(JSON.parse(raw) as T); } catch {}
+    }
+    setHydrated(true);
   }, [key]);
+
   useEffect(() => {
-    if (hydrated.current) window.localStorage.setItem(key, JSON.stringify(value));
-  }, [key, value]);
+    if (hydrated) window.localStorage.setItem(key, JSON.stringify(value));
+  }, [hydrated, key, value]);
+
   return [value, setValue] as const;
 }
 
