@@ -56,3 +56,23 @@ font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans
 .advisorForm{display:grid;gap:12px}.advisorForm textarea{min-height:150px;resize:vertical;border:1px solid var(--line);border-radius:15px;padding:14px;font:inherit;outline:none}.advisorAnswer p{white-space:pre-wrap;line-height:1.6}
 .primaryButton:disabled,.sendButton:disabled,.micButton:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:760px){.connectionBanner{align-items:flex-start;font-size:10px}.authPanel form{display:grid}.resultRow{display:grid;gap:2px}.advisorForm textarea{min-height:120px}}
+
+
+/* Daily Core + Personal Hub */
+.filterRow{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 18px}
+.filterChip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 12px;font-weight:800;font-size:12px;cursor:pointer;color:#6d7285}
+.filterChip.active{background:#f1efff;border-color:#d7d3ff;color:#565bc7}
+.calendarActions,.rowActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.scheduleList{display:grid;gap:4px}.scheduleList .eventRow{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px}
+.typeBadge,.capabilityBadge{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:5px 9px;font-size:10px;font-weight:900;letter-spacing:.04em;background:#f3f4f7;color:#767b8c;white-space:nowrap}
+.capabilityBadge.open_only{background:#eef4ff;color:#4f6eb7}.capabilityBadge.read{background:#eff9f2;color:#3f8056}.capabilityBadge.action{background:#fff4e9;color:#a3642e}.capabilityBadge.not_connected{background:#f5f5f6;color:#8c8f98}
+.calendarPrompts{margin-top:18px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.goalTask{font-size:13px!important;margin:6px 0 0!important;color:#575d72!important}
+.bigNumber{display:block;font-size:52px;line-height:1;margin:12px 0}
+.contactRow,.connectionRow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-top:1px solid var(--line)}
+.contactRow:first-of-type,.connectionRow:first-of-type{border-top:0}.contactRow>div:first-child,.connectionRow>div:first-child{min-width:0;flex:1}
+.contactRow small,.connectionRow small{display:block;color:#8a8e9d;margin-top:4px}.contactRow a.linkButton{text-decoration:none}
+.inlineAction{border:0;background:#565de0;color:#fff;border-radius:11px;padding:7px 10px;font-size:12px;font-weight:800;cursor:pointer;margin-left:auto}
+.inlineFallback{border:0;background:transparent;color:#565bc7;font-size:12px;font-weight:800;cursor:pointer}
+.documentRow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 0;border-top:1px solid var(--line)}.documentRow:first-of-type{border-top:0}.documentRow>div{min-width:0}.documentRow b{display:block}.documentRow small{display:block}
+@media(max-width:760px){.calendarPrompts{grid-template-columns:1fr}.scheduleList .eventRow{grid-template-columns:auto 1fr}.scheduleList .typeBadge{grid-column:2}.contactRow,.connectionRow{align-items:flex-start;flex-wrap:wrap}.rowActions{width:100%}.capabilityBadge{margin-left:auto}}
