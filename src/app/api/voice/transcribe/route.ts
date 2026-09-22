@@ -6,6 +6,12 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) {
+      return NextResponse.json({ error: "supabase_not_configured" }, { status: 503 });
+    }
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json({ error: "openai_not_configured" }, { status: 503 });
+    }
     const supabase = await createSupabaseServerClient();
     const { data } = await supabase.auth.getUser();
     if (!data.user) return NextResponse.json({ error: "auth_required" }, { status: 401 });
