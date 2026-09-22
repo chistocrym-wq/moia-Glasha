@@ -1,36 +1,38 @@
 import Image from "next/image";
 
-const SHEET_WIDTH = 1211;
-const SHEET_HEIGHT = 1299;
-const COLS = 5;
-const ROWS = 2;
+export type GlashaImage =
+  | "home"
+  | "work"
+  | "health"
+  | "learning"
+  | "travel"
+  | "documents"
+  | "quick"
+  | "ideas"
+  | "cat"
+  | "cooking";
 
 export function GlashaCharacter({
-  sprite = 0,
+  image,
   priority = false,
   className = "",
+  alt = "Глаша",
 }: {
-  sprite?: number;
+  image: GlashaImage;
   priority?: boolean;
   className?: string;
+  alt?: string;
 }) {
-  const safe = Math.max(0, Math.min(sprite, COLS * ROWS - 1));
-  const col = safe % COLS;
-  const row = Math.floor(safe / COLS);
-
   return (
-    <div className={`glashaCrop ${className}`} aria-label="Глаша">
+    <div className={`glashaCharacter ${className}`}>
       <Image
-        src="/glasha/glasha-sprite.webp"
-        alt=""
-        aria-hidden="true"
-        width={SHEET_WIDTH}
-        height={SHEET_HEIGHT}
-        sizes="(max-width: 760px) 145px, 175px"
+        src={`/glasha/characters/${image}.webp`}
+        alt={alt}
+        width={793}
+        height={1983}
+        sizes="(max-width: 760px) 180px, (max-width: 1100px) 250px, 330px"
         priority={priority}
-        unoptimized
-        className="glashaSheet"
-        style={{ transform: `translate(-${col * 20}%, -${row * 50}%)` }}
+        className="glashaCharacterImage"
       />
     </div>
   );
@@ -39,11 +41,11 @@ export function GlashaCharacter({
 export function AssistantAvatar({ className = "" }: { className?: string }) {
   return (
     <Image
-      src="/icons/dasha-placeholder.svg"
-      alt="Аватар Глаши"
-      width={192}
-      height={192}
-      unoptimized
+      src="/glasha/avatar.webp"
+      alt="Глаша"
+      width={640}
+      height={640}
+      sizes="64px"
       className={`assistantAvatar ${className}`}
       priority
     />
