@@ -1,12 +1,22 @@
-const CACHE_VERSION = "glasha-shell-v3";
+const CACHE_VERSION = "glasha-shell-v4";
 const CORE = [
   "/",
   "/manifest.webmanifest",
-  "/icons/icon-192.svg",
-  "/icons/icon-512.svg",
-  "/icons/icon-maskable.svg",
-  "/icons/dasha-placeholder.svg",
-  "/glasha/glasha-sprite.webp"
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/icons/icon-maskable.png",
+  "/icons/apple-touch-icon.png",
+  "/glasha/avatar.webp",
+  "/glasha/characters/home.webp",
+  "/glasha/characters/work.webp",
+  "/glasha/characters/health.webp",
+  "/glasha/characters/learning.webp",
+  "/glasha/characters/travel.webp",
+  "/glasha/characters/documents.webp",
+  "/glasha/characters/quick.webp",
+  "/glasha/characters/ideas.webp",
+  "/glasha/characters/cat.webp",
+  "/glasha/characters/cooking.webp"
 ];
 
 self.addEventListener("install", (event) => {
@@ -28,7 +38,6 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
-
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
@@ -47,16 +56,10 @@ self.addEventListener("fetch", (event) => {
 
   if (url.pathname.startsWith("/_next/static/")) {
     event.respondWith(
-      caches.match(request).then((cached) => {
-        if (cached) return cached;
-        return fetch(request).then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        });
-      })
+      caches.match(request).then((cached) => cached || fetch(request).then((response) => {
+        if (response.ok) caches.open(CACHE_VERSION).then((cache) => cache.put(request, response.clone()));
+        return response;
+      }))
     );
     return;
   }
@@ -64,10 +67,7 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     fetch(request)
       .then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
-        }
+        if (response.ok) caches.open(CACHE_VERSION).then((cache) => cache.put(request, response.clone()));
         return response;
       })
       .catch(() => caches.match(request))
