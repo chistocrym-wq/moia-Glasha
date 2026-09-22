@@ -776,12 +776,34 @@ export default function Home() {
 
 function ResultPreview({ result }: { result: AssistantResponse }) {
   const rows = Array.isArray(result.data) ? result.data as Array<Record<string, unknown>> : [];
+
+  function openAction(url: string) {
+    if (!url) return;
+    if (/^https?:/i.test(url)) window.open(url, "_blank", "noopener,noreferrer");
+    else window.location.href = url;
+  }
+
   return <div className="resultPreview">
     <b>{result.reply || "Готово"}</b>
-    {rows.slice(0, 6).map((row, index) => <div className="resultRow" key={String(row.id || index)}>
-      <span>{String(row.title || row.merchant || row.category || "Запись")}</span>
-      <small>{row.due_date ? String(row.due_date) : row.occurred_at ? formatDateTime(String(row.occurred_at)) : ""}</small>
-    </div>)}
+    {rows.slice(0, 6).map((row, index) => {
+      const actionUrl = String(row.action_url || row.url || "");
+      const fallbackUrl = String(row.fallback_url || "");
+      const secondary = row.price
+        ? [row.departure, row.arrival, row.price, row.source].filter(Boolean).map(String).join(" · ")
+        : row.due_date
+          ? String(row.due_date)
+          : row.occurred_at
+            ? formatDateTime(String(row.occurred_at))
+            : row.time
+              ? [row.date, row.time, row.area].filter(Boolean).map(String).join(" · ")
+              : "";
+      return <div className="resultRow" key={String(row.id || row.url || index)}>
+        <span>{String(row.title || row.merchant || row.category || "Запись")}</span>
+        <small>{secondary}</small>
+        {actionUrl && <button className="inlineAction" onClick={() => openAction(actionUrl)}>{row.requires_confirmation ? "Подтвердить" : "Открыть"}</button>}
+        {fallbackUrl && fallbackUrl !== actionUrl && <button className="inlineFallback" onClick={() => openAction(fallbackUrl)}>web</button>}
+      </div>;
+    })}
   </div>;
 }
 
