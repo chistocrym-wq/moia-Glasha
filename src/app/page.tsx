@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { AssistantAvatar, GlashaCharacter } from "@/components/GlashaCharacter";
+import { AssistantAvatar, GlashaCharacter, type GlashaImage } from "@/components/GlashaCharacter";
 import { InstallGlashaTile } from "@/components/PwaClient";
 
 type SectionId =
@@ -21,19 +21,19 @@ type RecognitionLike = {
 type SpeechRecognitionCtor = new () => RecognitionLike;
 type WindowWithSpeech = Window & { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor };
 
-const sections: Array<{ id: SectionId; label: string; icon: string; subtitle: string; sprite: number }> = [
-  { id: "home", label: "Главная", icon: "⌂", subtitle: "Всё важное сейчас", sprite: 9 },
-  { id: "tasks", label: "Мои дела", icon: "✓", subtitle: "Личное и бытовое", sprite: 9 },
-  { id: "work", label: "Работа", icon: "▣", subtitle: "Проекты и задачи", sprite: 5 },
-  { id: "calendar", label: "Календарь", icon: "◫", subtitle: "События и напоминания", sprite: 2 },
-  { id: "finance", label: "Финансы", icon: "₽", subtitle: "Личные и рабочие", sprite: 1 },
-  { id: "health", label: "Здоровье", icon: "♡", subtitle: "Самочувствие и цикл", sprite: 3 },
-  { id: "learning", label: "Обучение", icon: "◉", subtitle: "Языки и развитие", sprite: 0 },
-  { id: "travel", label: "Поездки", icon: "✈", subtitle: "Билеты и планы", sprite: 2 },
-  { id: "documents", label: "Документы", icon: "▤", subtitle: "Всё под рукой", sprite: 1 },
-  { id: "quick", label: "Быстрый доступ", icon: "⌘", subtitle: "Ссылки и приложения", sprite: 9 },
-  { id: "advisor", label: "Советчик", icon: "?", subtitle: "Найти и разобраться", sprite: 8 },
-  { id: "chat", label: "Поговорить", icon: "✦", subtitle: "Выгрузить мысли", sprite: 4 },
+const sections: Array<{ id: SectionId; label: string; icon: string; subtitle: string; image: GlashaImage }> = [
+  { id: "home", label: "Главная", icon: "⌂", subtitle: "Всё важное сейчас", image: "home" },
+  { id: "tasks", label: "Мои дела", icon: "✓", subtitle: "Личное и бытовое", image: "home" },
+  { id: "work", label: "Работа", icon: "▣", subtitle: "Проекты и задачи", image: "work" },
+  { id: "calendar", label: "Календарь", icon: "◫", subtitle: "События и напоминания", image: "travel" },
+  { id: "finance", label: "Финансы", icon: "₽", subtitle: "Личные и рабочие", image: "documents" },
+  { id: "health", label: "Здоровье", icon: "♡", subtitle: "Самочувствие и цикл", image: "health" },
+  { id: "learning", label: "Обучение", icon: "◉", subtitle: "Языки и развитие", image: "learning" },
+  { id: "travel", label: "Поездки", icon: "✈", subtitle: "Билеты и планы", image: "travel" },
+  { id: "documents", label: "Документы", icon: "▤", subtitle: "Всё под рукой", image: "documents" },
+  { id: "quick", label: "Быстрый доступ", icon: "⌘", subtitle: "Ссылки и приложения", image: "quick" },
+  { id: "advisor", label: "Советчик", icon: "?", subtitle: "Найти и разобраться", image: "ideas" },
+  { id: "chat", label: "Поговорить", icon: "✦", subtitle: "Выгрузить мысли", image: "cat" },
 ];
 
 const initialTasks: Task[] = [
@@ -159,7 +159,7 @@ export default function Home() {
           <form className="commandBar" onSubmit={submitCommand}><button type="button" className={listening ? "micButton listening" : "micButton"} onClick={startVoice}>🎙</button>
             <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Например: в понедельник оплатить страховку…" /><button className="sendButton">Запомнить</button></form>
           <div className="promptHints"><button onClick={() => setCommand("Потратила 45 евро на продукты")}>+ расход</button><button onClick={() => setCommand("Напомни завтра позвонить врачу")}>+ напоминание</button><button onClick={() => setCommand("По работе проверить договор")}>+ работа</button></div>
-        </div><div className="heroGlasha"><GlashaCharacter sprite={6} priority className="heroCharacter"/><span className="speechBubble">Я рядом ♡</span></div></section>
+        </div><div className="heroGlasha"><GlashaCharacter image="home" priority className="heroCharacter" alt="Глаша рядом" /><span className="speechBubble">Я рядом ♡</span></div></section>
 
         <div className="overviewGrid">{todayOverview.map((x) => <article key={x.label} className={`statCard ${x.tone}`}><span>{x.label}</span><strong>{x.value}</strong></article>)}</div>
 
@@ -169,7 +169,7 @@ export default function Home() {
             <div className="insight"><span className="insightIcon">✦</span><div><b>{notes.length ? `${notes.length} мыслей ждут разбора` : "Входящие мысли пусты"}</b><p>{notes.length ? "Можно разобрать их по делам, планам и идеям." : "Говори всё, что приходит в голову — я сохраню."}</p></div></div>
             <div className="insight"><span className="insightIcon">♡</span><div><b>Время для себя</b><p>На вечер можно оставить окно без рабочих задач.</p></div></div>
           </section></div>
-      </> : <SectionContent active={active} currentSprite={current.sprite} tasks={tasks} events={events} expenses={expenses} notes={notes} totalExpenses={totalExpenses}
+      </> : <SectionContent active={active} currentImage={current.image} tasks={tasks} events={events} expenses={expenses} notes={notes} totalExpenses={totalExpenses}
         onToggleTask={toggleTask} onAddTask={addTask} onAddExpense={addExpense} onCommand={processCommand} />}
     </section>
 
@@ -177,12 +177,11 @@ export default function Home() {
   </main>;
 }
 
-function SectionContent({ active, currentSprite, tasks, events, expenses, notes, totalExpenses, onToggleTask, onAddTask, onAddExpense, onCommand }:{
-  active: SectionId; currentSprite:number; tasks:Task[]; events:EventItem[]; expenses:Expense[]; notes:Note[]; totalExpenses:number;
+function SectionContent({ active, currentImage, tasks, events, expenses, notes, totalExpenses, onToggleTask, onAddTask, onAddExpense, onCommand }:{\n  active: SectionId; currentImage:GlashaImage; tasks:Task[]; events:EventItem[]; expenses:Expense[]; notes:Note[]; totalExpenses:number;
   onToggleTask:(id:string)=>void; onAddTask:(a?:Task["area"])=>void; onAddExpense:(a?:Expense["area"])=>void; onCommand:(t:string)=>void;
 }) {
   return <div className="sectionLayout">
-    <section className="sectionLead"><div><Chip>{sections.find(s=>s.id===active)?.label}</Chip><h2>{headline(active)}</h2><p>{description(active)}</p></div><div className="sectionGlasha"><GlashaCharacter sprite={currentSprite} className="sectionCharacter"/></div></section>
+    <section className="sectionLead"><div><Chip>{sections.find(s=>s.id===active)?.label}</Chip><h2>{headline(active)}</h2><p>{description(active)}</p></div><div className="sectionGlasha"><GlashaCharacter image={currentImage} className="sectionCharacter" alt={`Глаша — ${sections.find(s=>s.id===active)?.label ?? "раздел"}`} /></div></section>
 
     {(active==="tasks"||active==="work") && <section className="panel"><div className="panelHeader"><div><p className="eyebrow">{active==="work"?"Работа":"Личное + работа"}</p><h3>{active==="work"?"Текущие задачи":"Все дела"}</h3></div><button className="primaryButton" onClick={()=>onAddTask(active==="work"?"Работа":"Личное")}>+ Добавить</button></div>
       <div className="taskList">{tasks.filter(t=>active==="tasks"||t.area==="Работа").map(t=><button key={t.id} className={`taskRow ${t.done?"done":""}`} onClick={()=>onToggleTask(t.id)}><span className="checkCircle">{t.done?"✓":""}</span><span className="taskText"><b>{t.title}</b><small>{t.area}{t.time?` · ${t.time}`:""}</small></span><span>›</span></button>)}</div></section>}
