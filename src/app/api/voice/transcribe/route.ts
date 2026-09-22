@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { transcriptionModel } from "@/lib/model-policy";
 
 export const runtime = "nodejs";
 
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const transcript = await openai.audio.transcriptions.create({
       file,
-      model: process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe",
+      model: transcriptionModel(),
       language: "ru",
       prompt: "Русская речь о личных делах, работе, финансах, здоровье, календаре, поездках, документах и целях.",
     });
