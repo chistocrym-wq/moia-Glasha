@@ -177,7 +177,8 @@ export default function Home() {
   </main>;
 }
 
-function SectionContent({ active, currentImage, tasks, events, expenses, notes, totalExpenses, onToggleTask, onAddTask, onAddExpense, onCommand }: {\n  active: SectionId; currentImage: GlashaImage; tasks:Task[]; events:EventItem[]; expenses:Expense[]; notes:Note[]; totalExpenses:number;
+function SectionContent({ active, currentImage, tasks, events, expenses, notes, totalExpenses, onToggleTask, onAddTask, onAddExpense, onCommand }: {
+  active: SectionId; currentImage: GlashaImage; tasks:Task[]; events:EventItem[]; expenses:Expense[]; notes:Note[]; totalExpenses:number;
   onToggleTask:(id:string)=>void; onAddTask:(a?:Task["area"])=>void; onAddExpense:(a?:Expense["area"])=>void; onCommand:(t:string)=>void;
 }) {
   return <div className="sectionLayout">
