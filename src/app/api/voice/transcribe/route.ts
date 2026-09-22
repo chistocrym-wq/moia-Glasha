@@ -1,0 +1,31 @@
+import OpenAI from "openai";
+import { NextResponse } from "next/server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+export const runtime = "nodejs";
+
+export async function POST(request: Request) {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) return NextResponse.json({ error: "auth_required" }, { status: 401 });
+
+    const form = await request.formData();
+    const file = form.get("audio");
+    if (!(file instanceof File)) return NextResponse.json({ error: "audio_required" }, { status: 400 });
+    if (file.size > 25 * 1024 * 1024) return NextResponse.json({ error: "audio_too_large" }, { status: 413 });
+
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const transcript = await openai.audio.transcriptions.create({
+      file,
+      model: process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe",
+      language: "ru",
+      prompt: "Русская речь о личных делах, работе, финансах, здоровье, календаре, поездках, документах и целях.",
+    });
+
+    return NextResponse.json({ ok: true, text: transcript.text });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "transcription_failed" }, { status: 500 });
+  }
+}
