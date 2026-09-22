@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+// env-refresh: Supabase runtime configuration
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   async headers() {
