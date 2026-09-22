@@ -45,6 +45,8 @@ create table if not exists public.tasks (
   title text not null,
   description text,
   project text,
+  due_date date,
+  due_time time,
   due_at timestamptz,
   reminder_at timestamptz,
   priority text not null default 'normal' check (priority in ('low','normal','high','urgent')),
@@ -141,7 +143,7 @@ create table if not exists public.quick_links (
 );
 
 create index if not exists expenses_user_date_idx on public.expenses(user_id, occurred_at desc);
-create index if not exists tasks_user_due_idx on public.tasks(user_id, due_at);
+create index if not exists tasks_user_due_idx on public.tasks(user_id, due_date, due_time);
 create index if not exists events_user_start_idx on public.calendar_events(user_id, start_at);
 create index if not exists health_user_date_idx on public.health_events(user_id, occurred_at desc);
 create index if not exists inbox_user_created_idx on public.inbox_entries(user_id, created_at desc);
