@@ -19,6 +19,7 @@ type Parsed = {
   currency: string | null;
   category_slug: string | null;
   merchant: string | null;
+  occurred_at: string | null;
   area: "personal" | "work" | null;
   due_date: string | null;
   due_time: string | null;
@@ -30,6 +31,8 @@ type Parsed = {
   goal_kind: "dream" | "goal" | null;
   target_date: string | null;
   query_range: "today" | "tomorrow" | "week" | "month" | "all" | null;
+  query_start_date: string | null;
+  query_end_date: string | null;
   tags: string[];
   confidence: number;
   needs_clarification: boolean;
@@ -50,6 +53,7 @@ const schema = {
     currency: { type: ["string","null"] },
     category_slug: { type: ["string","null"] },
     merchant: { type: ["string","null"] },
+    occurred_at: { type: ["string","null"] },
     area: { type: ["string","null"], enum: ["personal","work",null] },
     due_date: { type: ["string","null"] },
     due_time: { type: ["string","null"] },
@@ -61,30 +65,71 @@ const schema = {
     goal_kind: { type: ["string","null"], enum: ["dream","goal",null] },
     target_date: { type: ["string","null"] },
     query_range: { type: ["string","null"], enum: ["today","tomorrow","week","month","all",null] },
+    query_start_date: { type: ["string","null"] },
+    query_end_date: { type: ["string","null"] },
     tags: { type: "array", items: { type: "string" } },
     confidence: { type: "number", minimum: 0, maximum: 1 },
     needs_clarification: { type: "boolean" },
     clarification_question: { type: ["string","null"] },
   },
   required: [
-    "action","title","description","amount","currency","category_slug","merchant","area",
-    "due_date","due_time","event_kind","start_at","end_at","all_day","health_kind",
-    "goal_kind","target_date","query_range","tags","confidence","needs_clarification","clarification_question"
+    "action","title","description","amount","currency","category_slug","merchant","occurred_at","area",
+    "due_date","due_time","event_kind","start_at","end_at","all_day","health_kind","goal_kind",
+    "target_date","query_range","query_start_date","query_end_date","tags","confidence",
+    "needs_clarification","clarification_question"
   ],
 } as const;
 
-function dateForRange(range: Parsed["query_range"], timezone: string) {
-  const now = new Date();
-  const local = new Intl.DateTimeFormat("en-CA", {
+function localDate(timezone: string, offsetDays = 0) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit"
-  }).format(now);
-  const base = new Date(local + "T12:00:00Z");
-  if (range === "tomorrow") base.setUTCDate(base.getUTCDate() + 1);
-  return base.toISOString().slice(0, 10);
+  }).format(new Date());
+  const d = new Date(parts + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+function taskBounds(range: Parsed["query_range"], timezone: string) {
+  const today = localDate(timezone);
+  if (range === "today") return { start: today, end: today };
+  if (range === "tomorrow") {
+    const t = localDate(timezone, 1);
+    return { start: t, end: t };
+  }
+  if (range === "week") return { start: today, end: localDate(timezone, 7) };
+  if (range === "month") {
+    const start = today.slice(0, 8) + "01";
+    const d = new Date(start + "T12:00:00Z");
+    d.setUTCMonth(d.getUTCMonth() + 1);
+    d.setUTCDate(0);
+    return { start, end: d.toISOString().slice(0, 10) };
+  }
+  return null;
+}
+
+function sumExpenses(rows: Array<{ amount: number | string; currency: string; expense_categories?: { name?: string; slug?: string } | null }>) {
+  const byCurrency: Record<string, number> = {};
+  const byCategory: Record<string, Record<string, number>> = {};
+  for (const row of rows) {
+    const amount = Number(row.amount) || 0;
+    const currency = row.currency || "RUB";
+    const category = row.expense_categories?.name || "Другое";
+    byCurrency[currency] = (byCurrency[currency] || 0) + amount;
+    byCategory[category] ||= {};
+    byCategory[category][currency] = (byCategory[category][currency] || 0) + amount;
+  }
+  return { byCurrency, byCategory, count: rows.length };
 }
 
 export async function POST(request: Request) {
   try {
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) {
+      return NextResponse.json({ error: "supabase_not_configured" }, { status: 503 });
+    }
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json({ error: "openai_not_configured" }, { status: 503 });
+    }
+
     const supabase = await createSupabaseServerClient();
     const { data: authData } = await supabase.auth.getUser();
     const user = authData.user;
@@ -113,14 +158,17 @@ export async function POST(request: Request) {
       reasoning: { effort: "low" },
       instructions:
         "Ты — маршрутизатор личного помощника Глаша. Превращай русскую естественную речь в одно структурированное действие. " +
-        "Не придумывай сумму, дату, человека или категорию. Если данных не хватает для записи, поставь needs_clarification=true. " +
-        "Для расходов выбирай одну категорию из списка пользователя. Кофе должен попадать в coffee_cafes, расходы на внешность/одежду/уход — self_care, " +
-        "аренда и коммунальные — housing, обучение — education, расходы на сына — child. " +
-        "Если пользователь спрашивает список или итог, используй query_tasks/query_expenses, а не создание записи. " +
-        "Если пользователь сообщает начало менструации, используй log_health с health_kind=cycle_start и event_kind=cycle. " +
-        "Если фраза про работу, task.area=work. Отвечай только по JSON-схеме.",
+        "Не придумывай сумму, дату, человека или категорию. Если обязательных данных для записи не хватает, needs_clarification=true. " +
+        "Для расходов выбирай одну категорию из списка пользователя. Кофе/кафе -> coffee_cafes; внешность, одежда, уход -> self_care; " +
+        "аренда/ЖКХ -> housing; обучение -> education; расходы на сына -> child. " +
+        "Если пользователь спрашивает список или сумму, используй query_tasks/query_expenses, а не создание записи. " +
+        "Для query_expenses заполни query_start_date и query_end_date в YYYY-MM-DD по смыслу запроса. query_end_date включительна. " +
+        "Если указан месяц без года, используй текущий год. Если спрашивают конкретную категорию, заполни category_slug. " +
+        "Если пользователь сообщает начало менструации, используй log_health с health_kind=cycle_start. " +
+        "Если фраза про работу, area=work. Даты задач возвращай в due_date YYYY-MM-DD, время отдельно HH:MM. " +
+        "occurred_at используй только если пользователь явно указал дату/время расхода; иначе null. Отвечай только по JSON-схеме.",
       input:
-        `Текущее время UTC: ${now}\nЧасовой пояс пользователя: ${timezone}\nВалюта по умолчанию: ${defaultCurrency}\n` +
+        `Текущее время UTC: ${now}\nЛокальная дата пользователя: ${localDate(timezone)}\nЧасовой пояс: ${timezone}\nВалюта по умолчанию: ${defaultCurrency}\n` +
         `Категории расходов:\n${categoryText}\n\nФраза пользователя: ${text}`,
       text: {
         format: {
@@ -134,14 +182,14 @@ export async function POST(request: Request) {
 
     const parsed = JSON.parse(response.output_text) as Parsed;
 
-    await supabase.from("inbox_entries").insert({
+    const { data: inboxRow } = await supabase.from("inbox_entries").insert({
       user_id: user.id,
       text,
       source: body?.source === "voice" ? "voice" : "text",
       intent: parsed.action,
       structured: parsed,
       processed: !parsed.needs_clarification,
-    });
+    }).select("id").single();
 
     if (parsed.needs_clarification) {
       return NextResponse.json({
@@ -167,8 +215,9 @@ export async function POST(request: Request) {
         note: parsed.description,
         raw_text: text,
         source: body?.source === "voice" ? "voice" : "text",
+        occurred_at: parsed.occurred_at || new Date().toISOString(),
         tags: parsed.tags,
-      }).select("id,amount,currency").single();
+      }).select("id,amount,currency,occurred_at").single();
       if (error) throw error;
       return NextResponse.json({
         ok: true, action: parsed.action, data,
@@ -186,7 +235,7 @@ export async function POST(request: Request) {
         due_time: parsed.due_time,
         raw_text: text,
         source: body?.source === "voice" ? "voice" : "text",
-      }).select("id,title,area,due_date,due_time").single();
+      }).select("id,title,area,due_date,due_time,status").single();
       if (error) throw error;
       return NextResponse.json({
         ok: true, action: parsed.action, data,
@@ -208,7 +257,7 @@ export async function POST(request: Request) {
         all_day: parsed.all_day ?? false,
         raw_text: text,
         source: body?.source === "voice" ? "voice" : "text",
-      }).select("id,title,start_at").single();
+      }).select("id,title,start_at,kind").single();
       if (error) throw error;
       return NextResponse.json({ ok: true, action: parsed.action, data, reply: "Добавила событие в календарь." });
     }
@@ -249,19 +298,27 @@ export async function POST(request: Request) {
         title: parsed.title || text,
         description: parsed.description,
         target_date: parsed.target_date,
-      }).select("id,title,kind,target_date").single();
+      }).select("id,title,kind,target_date,status").single();
       if (error) throw error;
-      return NextResponse.json({ ok: true, action: parsed.action, data, reply: "Сохранила цель. Дальше сможем разложить её на шаги." });
+      return NextResponse.json({ ok: true, action: parsed.action, data, reply: "Сохранила цель. Её можно разложить на шаги в Советчике." });
     }
 
     if (parsed.action === "save_note") {
-      return NextResponse.json({ ok: true, action: parsed.action, reply: "Сохранила мысль во входящие." });
+      return NextResponse.json({ ok: true, action: parsed.action, data: inboxRow, reply: "Сохранила мысль во входящие." });
     }
 
     if (parsed.action === "query_tasks") {
-      const range = parsed.query_range || "today";
-      let query = supabase.from("tasks").select("id,title,area,due_date,due_time,status").eq("user_id", user.id).neq("status", "done").order("due_date");
-      if (range === "today" || range === "tomorrow") query = query.eq("due_date", dateForRange(range, timezone));
+      const bounds = taskBounds(parsed.query_range || "today", timezone);
+      let query = supabase.from("tasks")
+        .select("id,title,area,due_date,due_time,status,priority")
+        .eq("user_id", user.id)
+        .neq("status", "done")
+        .order("due_date", { ascending: true })
+        .order("due_time", { ascending: true });
+      if (bounds) {
+        query = query.gte("due_date", bounds.start).lte("due_date", bounds.end);
+      }
+      if (parsed.area) query = query.eq("area", parsed.area);
       const { data, error } = await query;
       if (error) throw error;
       return NextResponse.json({
@@ -271,20 +328,58 @@ export async function POST(request: Request) {
     }
 
     if (parsed.action === "query_expenses") {
+      const start = parsed.query_start_date;
+      const end = parsed.query_end_date;
+      const select = parsed.category_slug
+        ? "id,amount,currency,occurred_at,merchant,note,expense_categories!inner(name,slug)"
+        : "id,amount,currency,occurred_at,merchant,note,expense_categories(name,slug)";
       let query = supabase.from("expenses")
-        .select("id,amount,currency,occurred_at,tags,expense_categories(name,slug)")
+        .select(select)
         .eq("user_id", user.id)
         .order("occurred_at", { ascending: false })
-        .limit(200);
+        .limit(1000);
+
+      if (start) query = query.gte("occurred_at", start + "T00:00:00");
+      if (end) {
+        const exclusive = new Date(end + "T00:00:00Z");
+        exclusive.setUTCDate(exclusive.getUTCDate() + 1);
+        query = query.lt("occurred_at", exclusive.toISOString());
+      }
+      if (parsed.category_slug) query = query.eq("expense_categories.slug", parsed.category_slug);
+
       const { data, error } = await query;
       if (error) throw error;
-      return NextResponse.json({ ok: true, action: parsed.action, data, reply: "Собрала расходы." });
+      const rows = (data ?? []) as unknown as Array<{
+        amount: number | string;
+        currency: string;
+        occurred_at: string;
+        merchant?: string | null;
+        expense_categories?: { name?: string; slug?: string } | null;
+      }>;
+      const summary = sumExpenses(rows);
+      const totals = Object.entries(summary.byCurrency)
+        .map(([currency, amount]) => `${amount.toFixed(2)} ${currency}`)
+        .join(", ");
+      const categoryName = parsed.category_slug
+        ? (categories ?? []).find((c) => c.slug === parsed.category_slug)?.name
+        : null;
+      const period = start || end ? ` за период ${start || "…"} — ${end || "…"}` : "";
+      const label = categoryName ? ` по категории «${categoryName}»` : "";
+      return NextResponse.json({
+        ok: true,
+        action: parsed.action,
+        data: rows,
+        summary,
+        reply: rows.length
+          ? `Расходы${label}${period}: ${totals}. Записей: ${rows.length}.`
+          : `Расходов${label}${period} не нашла.`,
+      });
     }
 
     return NextResponse.json({
       ok: true,
       action: "advice",
-      reply: "Советчик подключим к отдельному режиму с поиском и контекстом твоих данных.",
+      reply: "Для этого открой раздел «Советчик» — он использует отдельный режим с твоими задачами, целями и календарём.",
     });
   } catch (error) {
     console.error(error);
