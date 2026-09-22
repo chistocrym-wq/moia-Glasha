@@ -10,11 +10,15 @@ import {
   sendAssistantCommand,
   transcribeVoice,
   uploadEntityAttachment,
-  uploadDocument,
   getDocumentSignedUrl,
   type AssistantResponse,
   type SystemStatus,
 } from "@/lib/glasha-api";
+import {
+  documentUploadUserMessage,
+  uploadDocumentDirect,
+  type DocumentUploadMetadata,
+} from "@/lib/document-upload";
 
 type SectionId =
   | "home" | "tasks" | "work" | "calendar" | "finance" | "health"
@@ -604,38 +608,41 @@ export default function Home() {
     }
   }
 
-  function addDocumentToArchive() {
-    if (!liveData) {
-      setAnswer("Архив документов доступен после входа.");
-      return;
+  async function saveDocumentToArchive(
+    file: File,
+    metadata: DocumentUploadMetadata,
+    onProgress?: (percent: number) => void,
+  ) {
+    if (!liveData || !supabase || !userId) {
+      const error = new Error("Нужно войти в Глашу, чтобы сохранять документы.");
+      setAnswer(error.message);
+      throw error;
     }
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.webp";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const title = window.prompt("Название документа", file.name.replace(/\.[^.]+$/, ""))?.trim();
-      if (!title) return;
-      const ownerRaw = (window.prompt("Чей документ: user / child / mother / work / other", "user") || "user").trim();
-      const ownerPerson = (["user","child","mother","work","other"].includes(ownerRaw) ? ownerRaw : "other") as "user" | "child" | "mother" | "work" | "other";
-      const documentType = window.prompt("Тип документа, например passport / contract / insurance", "other")?.trim() || "other";
-      const expiryDate = window.prompt("Срок действия YYYY-MM-DD (можно оставить пустым)")?.trim() || undefined;
-      const tags = (window.prompt("Теги через запятую (необязательно)") || "").split(",").map((x) => x.trim()).filter(Boolean);
-      setBusy(true);
-      setAnswer("Загружаю документ в приватный архив…");
-      try {
-        await uploadDocument(file, { title, ownerPerson, documentType, expiryDate, tags });
-        setAnswer(`Документ «${title}» сохранён в приватном архиве.`);
-        await loadLiveData();
-      } catch (error) {
-        console.error(error);
-        setAnswer("Не получилось сохранить документ. Проверь migration 002.");
-      } finally {
-        setBusy(false);
-      }
-    };
-    input.click();
+
+    setAnswer("Загружаю документ напрямую в приватный Supabase Storage…");
+    try {
+      const saved = await uploadDocumentDirect(supabase, userId, file, metadata, onProgress);
+      const next: DocumentItem = {
+        id: saved.id,
+        title: saved.title,
+        ownerPerson: saved.owner_person,
+        documentType: saved.document_type,
+        expiryDate: saved.expiry_date || undefined,
+        tags: saved.tags ?? [],
+        mimeType: saved.mime_type || undefined,
+        sizeBytes: saved.size_bytes ? Number(saved.size_bytes) : undefined,
+      };
+      setDocuments((items) => [next, ...items.filter((item) => item.id !== next.id)]);
+      setAnswer(`Документ «${saved.title}» сохранён в приватном архиве.`);
+    } catch (error) {
+      console.error("document_upload_failed", {
+        code: error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code || "") : "",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      const message = documentUploadUserMessage(error);
+      setAnswer(message);
+      throw error;
+    }
   }
 
   async function openDocumentFromArchive(id: string) {
@@ -768,7 +775,7 @@ export default function Home() {
         onAddGoal={addGoal}
         onAttachTask={attachToTask}
         onAddContact={addContact}
-        onAddDocument={addDocumentToArchive}
+        onSaveDocument={saveDocumentToArchive}
         onOpenDocument={openDocumentFromArchive}
         onCommand={processCommand}
       />}
@@ -811,10 +818,98 @@ function ResultPreview({ result }: { result: AssistantResponse }) {
   </div>;
 }
 
+function DocumentUploadForm({
+  disabled,
+  onSave,
+}: {
+  disabled: boolean;
+  onSave: (file: File, metadata: DocumentUploadMetadata, onProgress?: (percent: number) => void) => Promise<void>;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [title, setTitle] = useState("");
+  const [ownerPerson, setOwnerPerson] = useState<DocumentUploadMetadata["ownerPerson"]>("user");
+  const [documentType, setDocumentType] = useState("other");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [tags, setTags] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!file) {
+      setStatus("Сначала выбери файл.");
+      return;
+    }
+    if (!title.trim()) {
+      setStatus("Укажи название документа.");
+      return;
+    }
+
+    setUploading(true);
+    setProgress(0);
+    setStatus("Загружаю…");
+    try {
+      await onSave(file, {
+        title: title.trim(),
+        ownerPerson,
+        documentType: documentType.trim() || "other",
+        expiryDate: expiryDate || undefined,
+        tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+      }, (percent) => {
+        setProgress(percent);
+        setStatus(`Загружаю… ${percent}%`);
+      });
+
+      setStatus("Сохранено в приватном архиве.");
+      setFile(null);
+      setTitle("");
+      setDocumentType("other");
+      setExpiryDate("");
+      setTags("");
+    } catch (error) {
+      setStatus(documentUploadUserMessage(error));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return <form className="documentUploadForm" onSubmit={submit}>
+    <label className="documentFileField">
+      <span>Файл</span>
+      <input
+        type="file"
+        accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.webp"
+        disabled={disabled || uploading}
+        onChange={(event) => {
+          const selected = event.target.files?.[0] ?? null;
+          setFile(selected);
+          if (selected && !title) setTitle(selected.name.replace(/\.[^.]+$/, ""));
+          setStatus("");
+        }}
+      />
+      <small>{file ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} МБ` : "До 50 МБ. Большие файлы загружаются частями напрямую в Supabase."}</small>
+    </label>
+    <label><span>Название</span><input value={title} onChange={(e) => setTitle(e.target.value)} disabled={disabled || uploading} required /></label>
+    <label><span>Чей документ</span><select value={ownerPerson} onChange={(e) => setOwnerPerson(e.target.value as DocumentUploadMetadata["ownerPerson"])} disabled={disabled || uploading}>
+      <option value="user">Мой</option><option value="child">Ребёнка</option><option value="mother">Мамы</option><option value="work">Рабочий</option><option value="other">Другое</option>
+    </select></label>
+    <label><span>Тип</span><input value={documentType} onChange={(e) => setDocumentType(e.target.value)} placeholder="passport, contract, insurance…" disabled={disabled || uploading} /></label>
+    <label><span>Срок действия</span><input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} disabled={disabled || uploading} /></label>
+    <label className="documentTags"><span>Теги</span><input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="паспорт, поездки" disabled={disabled || uploading} /></label>
+    <div className="documentUploadActions">
+      <button className="primaryButton" type="submit" disabled={disabled || uploading || !file}>{uploading ? "Загружаю…" : "Сохранить"}</button>
+      {uploading && <progress max={100} value={progress}>{progress}%</progress>}
+      {status && <span className={status.startsWith("Сохранено") ? "uploadStatus success" : "uploadStatus"}>{status}</span>}
+    </div>
+  </form>;
+}
+
+
 function SectionContent({
   active, currentImage, tasks, events, expenses, notes, goals, healthEvents, categories, documents, contacts, connections, liveData, totalText,
   advisorQuestion, advisorAnswer, advisorBusy, onAdvisorQuestion, onSubmitAdvisor,
-  onToggleTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact, onAddDocument, onOpenDocument, onCommand,
+  onToggleTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact, onSaveDocument, onOpenDocument, onCommand,
 }: {
   active: SectionId;
   currentImage: GlashaImage;
@@ -841,7 +936,7 @@ function SectionContent({
   onAddGoal: () => void;
   onAttachTask: (id: string) => void;
   onAddContact: () => void;
-  onAddDocument: () => void;
+  onSaveDocument: (file: File, metadata: DocumentUploadMetadata, onProgress?: (percent: number) => void) => Promise<void>;
   onOpenDocument: (id: string) => void;
   onCommand: (text: string, source?: "text" | "voice") => void;
 }) {
@@ -961,9 +1056,12 @@ function SectionContent({
     {active === "travel" && <div className="twoColumns"><section className="panel"><h3>Поиск билетов</h3><p className="muted">Глаша использует актуальный web search, показывает варианты и ссылки. Покупку не делает.</p><div className="promptStack"><button onClick={() => onCommand("Найди билет Санкт-Петербург — Москва завтра после 18:00")}>Найти билет СПб → Москва</button><button onClick={() => onCommand("Открой Tutu")}>Просто открыть Tutu</button></div></section><section className="panel"><h3>Поездки в календаре</h3><strong className="bigNumber">{events.filter(e => e.kind === "trip").length}</strong><p className="muted">Брони и поездки можно хранить как события.</p></section></div>}
 
     {active === "documents" && <section className="panel">
-      <div className="panelHeader"><div><p className="eyebrow">Приватный storage</p><h3>Мои документы</h3></div><button className="primaryButton" onClick={onAddDocument}>+ Загрузить</button></div>
-      <p className="muted">Файлы остаются в private bucket. В OpenAI отправляются только команды пользователя, не содержимое документов.</p>
-      {documents.length ? documents.map(doc => <div className="documentRow" key={doc.id}><div><b>{doc.title}</b><small>{doc.documentType} · {doc.ownerPerson}{doc.expiryDate ? ` · действует до ${doc.expiryDate}` : ""}</small></div><button className="linkButton" onClick={() => onOpenDocument(doc.id)}>Открыть</button></div>) : <p className="muted">Документов пока нет.</p>}
+      <div className="panelHeader"><div><p className="eyebrow">Приватный storage</p><h3>Мои документы</h3></div></div>
+      <p className="muted">Файл идёт из браузера прямо в private bucket Supabase. Через Netlify Function бинарные документы не проксируются.</p>
+      <DocumentUploadForm disabled={!liveData} onSave={onSaveDocument} />
+      <div className="documentArchive">
+        {documents.length ? documents.map(doc => <div className="documentRow" key={doc.id}><div><b>{doc.title}</b><small>{doc.documentType} · {doc.ownerPerson}{doc.expiryDate ? ` · действует до ${doc.expiryDate}` : ""}</small></div><button className="linkButton" onClick={() => onOpenDocument(doc.id)}>Открыть</button></div>) : <p className="muted">Документов пока нет.</p>}
+      </div>
       <div className="promptStack"><button onClick={() => onCommand("Глаша, найди мой паспорт")}>Найди мой паспорт</button></div>
     </section>}
 
