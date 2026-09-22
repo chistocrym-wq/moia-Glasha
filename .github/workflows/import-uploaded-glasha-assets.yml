@@ -40,7 +40,19 @@ jobs:
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add public/glasha public/icons
-          git rm glasha-assets-ready.zip
-          git commit -m 'feat: import approved Glasha artwork and app icons'
+          cp .asset-import/src/components/GlashaCharacter.tsx src/components/GlashaCharacter.tsx
+          cp .asset-import/src/app/page.tsx src/app/page.tsx
+          cp .asset-import/src/app/globals.css src/app/globals.css
+          cp .asset-import/src/app/layout.tsx src/app/layout.tsx
+          cp .asset-import/public/manifest.webmanifest public/manifest.webmanifest
+          cp .asset-import/public/sw.js public/sw.js
+
+          if grep -RqE 'glasha-sprite|glashaCrop|glashaSheet|currentSprite|sprite=' src public/manifest.webmanifest public/sw.js; then
+            echo "Old sprite implementation is still referenced."
+            exit 1
+          fi
+
+          git add public/glasha public/icons src public/manifest.webmanifest public/sw.js
+          git rm -r glasha-assets-ready.zip .asset-import
+          git commit -m 'feat: integrate approved Glasha artwork and PWA icons'
           git push origin HEAD:prototype/glasha-v1
