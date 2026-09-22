@@ -1,6 +1,7 @@
-const CACHE_VERSION = "glasha-shell-v4";
+const CACHE_VERSION = "glasha-shell-v5";
 const CORE = [
   "/",
+  "/offline.html",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
@@ -20,11 +21,7 @@ const CORE = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_VERSION)
-      .then((cache) => cache.addAll(CORE))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(caches.open(CACHE_VERSION).then((cache) => cache.addAll(CORE)));
 });
 
 self.addEventListener("activate", (event) => {
@@ -35,41 +32,53 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+
+function isSafeStatic(pathname) {
+  return (
+    pathname.startsWith("/_next/static/") ||
+    pathname.startsWith("/icons/") ||
+    pathname.startsWith("/glasha/") ||
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/offline.html"
+  );
+}
+
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
+
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  // Never cache authenticated/API/auth traffic or signed/private responses.
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
-          return response;
-        })
-        .catch(async () => (await caches.match(request)) || (await caches.match("/")))
+      fetch(request).catch(async () => {
+        return (await caches.match("/offline.html")) || (await caches.match("/")) || Response.error();
+      })
     );
     return;
   }
 
-  if (url.pathname.startsWith("/_next/static/")) {
-    event.respondWith(
-      caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-        if (response.ok) caches.open(CACHE_VERSION).then((cache) => cache.put(request, response.clone()));
-        return response;
-      }))
-    );
-    return;
-  }
+  if (!isSafeStatic(url.pathname)) return;
 
   event.respondWith(
-    fetch(request)
-      .then((response) => {
-        if (response.ok) caches.open(CACHE_VERSION).then((cache) => cache.put(request, response.clone()));
+    caches.match(request).then((cached) => {
+      const network = fetch(request).then((response) => {
+        if (response.ok && response.type === "basic") {
+          caches.open(CACHE_VERSION).then((cache) => cache.put(request, response.clone()));
+        }
         return response;
-      })
-      .catch(() => caches.match(request))
+      });
+      return cached || network;
+    })
   );
 });
