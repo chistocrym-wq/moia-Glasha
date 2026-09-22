@@ -867,10 +867,16 @@ function SectionContent({
     if (calendarFilter === "goals") return event.area === "Цели";
     return event.area === "Поездки" || event.area === "Поездка";
   });
+  const tasksText = filteredTasks.map((task) => `• ${task.dueDate || ""} ${task.time || ""} — ${task.title} [${task.area}${task.goalTitle ? ` · ${task.goalTitle}` : ""}]`).join("\n");
   const planText = [
-    ...filteredTasks.map((task) => `• ${task.dueDate || ""} ${task.time || ""} — ${task.title} [${task.area}${task.goalTitle ? ` · ${task.goalTitle}` : ""}]`),
+    tasksText,
     ...filteredEvents.map((event) => `• ${event.when} — ${event.title} [${event.area}]`),
-  ].join("\n");
+  ].filter(Boolean).join("\n");
+
+  async function copyTasks() {
+    if (!tasksText) return;
+    await navigator.clipboard.writeText(tasksText);
+  }
 
   async function copyPlan() {
     if (!planText) return;
@@ -898,7 +904,7 @@ function SectionContent({
     </section>}
 
     {active === "calendar" && <section className="panel">
-      <div className="panelHeader"><div><p className="eyebrow">Единый календарь</p><h3>Задачи + события</h3></div><div className="calendarActions"><button className="linkButton" onClick={copyPlan} disabled={!planText}>Копировать</button><button className="linkButton" onClick={sharePlan} disabled={!planText}>Поделиться</button></div></div>
+      <div className="panelHeader"><div><p className="eyebrow">Единый календарь</p><h3>Задачи + события</h3></div><div className="calendarActions"><button className="linkButton" onClick={copyTasks} disabled={!tasksText}>Копировать задачи</button><button className="linkButton" onClick={copyPlan} disabled={!planText}>Копировать план</button><button className="linkButton" onClick={sharePlan} disabled={!planText}>Поделиться</button></div></div>
       <div className="filterRow">{[
         ["all","Все"],["personal","Личное"],["work","Работа"],["health","Здоровье"],["goals","Цели"],["travel","Поездки"]
       ].map(([id,label]) => <button key={id} className={calendarFilter === id ? "filterChip active" : "filterChip"} onClick={() => setCalendarFilter(id as typeof calendarFilter)}>{label}</button>)}</div>
