@@ -23,7 +23,7 @@ type WindowWithSpeech = Window & { SpeechRecognition?: SpeechRecognitionCtor; we
 
 const sections: Array<{ id: SectionId; label: string; icon: string; subtitle: string; image: GlashaImage }> = [
   { id: "home", label: "Главная", icon: "⌂", subtitle: "Всё важное сейчас", image: "home" },
-  { id: "tasks", label: "Мои дела", icon: "✓", subtitle: "Личное и бытовое", image: "home" },
+  { id: "tasks", label: "Мои дела", icon: "✓", subtitle: "Личное и бытовое", image: "cooking" },
   { id: "work", label: "Работа", icon: "▣", subtitle: "Проекты и задачи", image: "work" },
   { id: "calendar", label: "Календарь", icon: "◫", subtitle: "События и напоминания", image: "travel" },
   { id: "finance", label: "Финансы", icon: "₽", subtitle: "Личные и рабочие", image: "documents" },
