@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { chooseAdvisorModel } from "@/lib/model-policy";
 
 export async function POST(request: Request) {
   try {
@@ -23,11 +24,18 @@ export async function POST(request: Request) {
       supabase.from("calendar_events").select("title,kind,start_at").eq("user_id", user.id).gte("start_at", new Date().toISOString()).order("start_at").limit(20),
     ]);
 
+    const selection = chooseAdvisorModel({
+      question,
+      explicitDeep: body?.mode === "deep",
+      useWeb: body?.use_web !== false,
+      contextItems: (tasks?.length || 0) + (goals?.length || 0) + (events?.length || 0),
+    });
+
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const response = await openai.responses.create({
-      model: process.env.OPENAI_ADVISOR_MODEL || "gpt-5.6-terra",
+      model: selection.model,
       store: false,
-      reasoning: { effort: "medium" },
+      reasoning: { effort: selection.reasoning },
       instructions:
         "Ты — советчик внутри личного помощника Глаша. Отвечай по-русски, практично и без лишней воды. " +
         "Используй личный контекст только когда он относится к вопросу. Не придумывай отсутствующие факты. " +
@@ -40,7 +48,7 @@ export async function POST(request: Request) {
         "\n\nБлижайшие события:\n" + JSON.stringify(events ?? []),
     });
 
-    return NextResponse.json({ ok: true, answer: response.output_text });
+    return NextResponse.json({ ok: true, answer: response.output_text, model_tier: selection.tier });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "advisor_failed" }, { status: 500 });
