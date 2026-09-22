@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { fastModel } from "@/lib/model-policy";
 
 type Parsed = {
   action:
@@ -153,7 +154,7 @@ export async function POST(request: Request) {
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const response = await openai.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+      model: fastModel(),
       store: false,
       reasoning: { effort: "low" },
       instructions:
