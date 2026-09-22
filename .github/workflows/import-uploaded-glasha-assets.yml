@@ -1,0 +1,46 @@
+name: Import uploaded Glasha assets
+
+on:
+  push:
+    branches:
+      - prototype/glasha-v1
+    paths:
+      - glasha-assets-ready.zip
+
+permissions:
+  contents: write
+
+jobs:
+  import-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: prototype/glasha-v1
+          fetch-depth: 1
+
+      - name: Import approved artwork
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f glasha-assets-ready.zip ]; then
+            echo "Asset package already imported."
+            exit 0
+          fi
+
+          unzip -o glasha-assets-ready.zip -d .
+
+          test -s public/glasha/avatar.webp
+          for name in home work health learning travel documents quick ideas cat cooking; do
+            test -s "public/glasha/characters/$name.webp"
+          done
+          for icon in icon-192.png icon-512.png icon-maskable.png apple-touch-icon.png; do
+            test -s "public/icons/$icon"
+          done
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/glasha public/icons
+          git rm glasha-assets-ready.zip
+          git commit -m 'feat: import approved Glasha artwork and app icons'
+          git push origin HEAD:prototype/glasha-v1
