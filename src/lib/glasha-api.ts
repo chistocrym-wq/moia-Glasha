@@ -25,9 +25,14 @@ async function parseJson(response: Response) {
   return data;
 }
 
+let systemStatusCache: { value: SystemStatus; expiresAt: number } | null = null;
+
 export async function getSystemStatus(): Promise<SystemStatus> {
+  if (systemStatusCache && systemStatusCache.expiresAt > Date.now()) return systemStatusCache.value;
   const response = await fetch("/api/system/status", { cache: "no-store" });
-  return parseJson(response);
+  const value = await parseJson(response) as SystemStatus;
+  systemStatusCache = { value, expiresAt: Date.now() + 60_000 };
+  return value;
 }
 
 export async function sendAssistantCommand(text: string, source: "text" | "voice" = "text"): Promise<AssistantResponse> {
@@ -63,27 +68,6 @@ export async function uploadEntityAttachment(entityType: string, entityId: strin
   form.append("entity_id", entityId);
   form.append("file", file);
   const response = await fetch("/api/attachments", { method: "POST", body: form });
-  return parseJson(response);
-}
-
-
-export type DocumentUploadMetadata = {
-  title: string;
-  ownerPerson: "user" | "child" | "mother" | "work" | "other";
-  documentType: string;
-  expiryDate?: string;
-  tags?: string[];
-};
-
-export async function uploadDocument(file: File, metadata: DocumentUploadMetadata) {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("title", metadata.title);
-  form.append("owner_person", metadata.ownerPerson);
-  form.append("document_type", metadata.documentType);
-  if (metadata.expiryDate) form.append("expiry_date", metadata.expiryDate);
-  if (metadata.tags?.length) form.append("tags", metadata.tags.join(","));
-  const response = await fetch("/api/documents", { method: "POST", body: form });
   return parseJson(response);
 }
 
