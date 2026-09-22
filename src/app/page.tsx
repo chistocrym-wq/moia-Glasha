@@ -322,6 +322,10 @@ export default function Home() {
       deepLink: row.deep_link || undefined,
       capability: row.capability as ConnectionItem["capability"],
     })));
+
+    if (taskGoalRes.error || eventAreaRes.error || documentRes.error || contactRes.error || connectionRes.error) {
+      setAnswer("Основная база подключена. Для новых функций Daily Core нужно применить migration 002.");
+    }
   }
 
   function eventArea(area?: string, kind?: string) {
