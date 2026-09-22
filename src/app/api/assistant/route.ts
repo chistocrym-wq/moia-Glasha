@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { fastModel } from "@/lib/model-policy";
+import { chooseAdvisorModel, fastModel } from "@/lib/model-policy";
 
 type Action =
   | "create_expense"
@@ -654,9 +654,47 @@ async function executeAction(ctx: Context, parsed: Parsed, rawText: string, sour
     return searchTickets(ctx, parsed);
   }
 
-  return {
-    reply: "Для глубокого разбора открой «Советчик» — там Глаша использует только релевантный личный контекст."
-  };
+  if (parsed.action === "advice") {
+    const goal = resolveGoal(ctx.goals, parsed.goal_title || parsed.title);
+    let taskQuery = supabase.from("tasks")
+      .select("id,title,area,due_date,due_time,status,priority,goal_id")
+      .eq("user_id", ctx.userId)
+      .neq("status", "done")
+      .order("due_date", { ascending: true })
+      .limit(20);
+    if (goal) taskQuery = taskQuery.eq("goal_id", goal.id);
+
+    const [{ data: tasks, error: taskError }, { data: events, error: eventError }] = await Promise.all([
+      taskQuery,
+      supabase.from("calendar_events")
+        .select("id,title,kind,area,start_at,end_at")
+        .eq("user_id", ctx.userId)
+        .gte("start_at", new Date().toISOString())
+        .order("start_at")
+        .limit(15)
+    ]);
+    if (taskError) throw taskError;
+    if (eventError) throw eventError;
+
+    const contextItems = (tasks?.length || 0) + (events?.length || 0) + (goal ? 1 : 0);
+    const selection = chooseAdvisorModel({ question: rawText, contextItems });
+    const response = await ctx.openai.responses.create({
+      model: selection.model,
+      store: false,
+      reasoning: { effort: selection.reasoning },
+      instructions:
+        "Ты — Советчик Глаши внутри главного окна. Ответь по-русски кратко и практично, используя только переданный контекст. " +
+        "Не придумывай факты. Если вопрос про цель, предложи ближайшие действия с учётом уже существующих задач и календаря.",
+      input:
+        `Вопрос: ${rawText}\n\n` +
+        `Цель: ${goal ? JSON.stringify(goal) : "не указана"}\n` +
+        `Связанные/открытые задачи: ${JSON.stringify(tasks ?? [])}\n` +
+        `Ближайший календарь: ${JSON.stringify(events ?? [])}`
+    });
+    return { reply: response.output_text, data: tasks ?? [], model_tier: selection.tier };
+  }
+
+  return { reply: "Не смогла определить действие." };
 }
 
 function actionSummary(results: Array<{ parsed: Parsed; result: Record<string, unknown> }>) {
