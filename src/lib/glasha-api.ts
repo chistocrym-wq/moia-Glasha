@@ -47,11 +47,11 @@ export async function transcribeVoice(blob: Blob): Promise<string> {
   return String(data.text || "");
 }
 
-export async function askAdvisor(question: string): Promise<string> {
+export async function askAdvisor(question: string, options?: { mode?: "fast" | "deep"; useWeb?: boolean }): Promise<string> {
   const response = await fetch("/api/advisor", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, mode: options?.mode, use_web: options?.useWeb }),
   });
   const data = await parseJson(response);
   return String(data.answer || "");
@@ -64,4 +64,31 @@ export async function uploadEntityAttachment(entityType: string, entityId: strin
   form.append("file", file);
   const response = await fetch("/api/attachments", { method: "POST", body: form });
   return parseJson(response);
+}
+
+
+export type DocumentUploadMetadata = {
+  title: string;
+  ownerPerson: "user" | "child" | "mother" | "work" | "other";
+  documentType: string;
+  expiryDate?: string;
+  tags?: string[];
+};
+
+export async function uploadDocument(file: File, metadata: DocumentUploadMetadata) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("title", metadata.title);
+  form.append("owner_person", metadata.ownerPerson);
+  form.append("document_type", metadata.documentType);
+  if (metadata.expiryDate) form.append("expiry_date", metadata.expiryDate);
+  if (metadata.tags?.length) form.append("tags", metadata.tags.join(","));
+  const response = await fetch("/api/documents", { method: "POST", body: form });
+  return parseJson(response);
+}
+
+export async function getDocumentSignedUrl(id: string): Promise<string> {
+  const response = await fetch(`/api/documents?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+  const data = await parseJson(response);
+  return String(data.document?.signed_url || "");
 }
