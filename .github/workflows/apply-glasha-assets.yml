@@ -1,0 +1,49 @@
+name: Apply Glasha visual assets
+
+on:
+  push:
+    branches:
+      - prototype/glasha-v1
+    paths:
+      - glasha_visual_assets_ready.zip
+
+permissions:
+  contents: write
+
+jobs:
+  apply-assets:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: prototype/glasha-v1
+          fetch-depth: 0
+
+      - name: Unpack prepared Glasha assets
+        run: |
+          set -euo pipefail
+          unzip -o glasha_visual_assets_ready.zip -d .
+          test -f public/glasha/avatar.webp
+          test -f public/glasha/characters/home.webp
+          test -f public/glasha/characters/work.webp
+          test -f public/glasha/characters/health.webp
+          test -f public/glasha/characters/learning.webp
+          test -f public/glasha/characters/travel.webp
+          test -f public/glasha/characters/documents.webp
+          test -f public/glasha/characters/quick.webp
+          test -f public/glasha/characters/ideas.webp
+          test -f public/glasha/characters/cat.webp
+          test -f public/icons/icon-192.png
+          test -f public/icons/icon-512.png
+          test -f public/icons/icon-maskable.png
+          test -f public/icons/apple-touch-icon.png
+          rm -f README_UPLOAD.txt glasha_visual_assets_ready.zip
+
+      - name: Commit visual assets
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A public/glasha public/icons glasha_visual_assets_ready.zip README_UPLOAD.txt
+          git commit -m 'feat: install high-quality Glasha visual assets'
+          git push origin HEAD:prototype/glasha-v1
