@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { chooseAdvisorModel, fastModel } from "@/lib/model-policy";
+import { searchLife } from "@/lib/life-os-server";
+import { contactQueryVariants, normalizeContactKey, normalizePhone } from "@/lib/contacts";
 import {
   deterministicRoute,
   resolveDateToken,
@@ -24,6 +26,9 @@ type Action =
   | "contact_action"
   | "search_tickets"
   | "move_task"
+  | "complete_task"
+  | "restore_task"
+  | "query_achievements"
   | "split_task"
   | "advice";
 
@@ -56,7 +61,7 @@ type Parsed = {
   document_query: string | null;
   service_name: string | null;
   contact_name: string | null;
-  contact_method: "call" | "telegram" | "email" | null;
+  contact_method: "call" | "telegram" | "email" | "show_phone" | null;
   message_text: string | null;
   route_from: string | null;
   route_to: string | null;
@@ -104,7 +109,7 @@ const schema = {
     document_query: { type: ["string","null"] },
     service_name: { type: ["string","null"] },
     contact_name: { type: ["string","null"] },
-    contact_method: { type: ["string","null"], enum: ["call","telegram","email",null] },
+    contact_method: { type: ["string","null"], enum: ["call","telegram","email","show_phone",null] },
     message_text: { type: ["string","null"] },
     route_from: { type: ["string","null"] },
     route_to: { type: ["string","null"] },
@@ -143,7 +148,19 @@ type Connection = {
   icon: string | null;
   aliases: string[];
 };
-type Contact = { id: string; name: string; relation: string | null; phone: string | null; email: string | null; telegram_username: string | null };
+type ContactPhone = { label?: string; value?: string; normalized?: string };
+type ContactEmail = { label?: string; value?: string };
+type Contact = {
+  id: string;
+  name: string;
+  relation: string | null;
+  phone: string | null;
+  email: string | null;
+  telegram_username: string | null;
+  phone_numbers: ContactPhone[] | null;
+  emails: ContactEmail[] | null;
+  aliases: string[] | null;
+};
 type Goal = { id: string; title: string };
 
 type Metrics = {
@@ -250,7 +267,7 @@ async function loadConnections(rt: Runtime) {
 async function loadContacts(rt: Runtime) {
   if (rt.contacts) return rt.contacts;
   const { data, error } = await tracked(rt,
-    rt.supabase.from("contacts").select("id,name,relation,phone,email,telegram_username").eq("user_id", rt.userId).limit(200)
+    rt.supabase.from("contacts").select("id,name,relation,phone,email,telegram_username,phone_numbers,emails,aliases").eq("user_id", rt.userId).limit(5000)
   );
   if (error) throw error;
   return (rt.contacts = data ?? []);
@@ -386,7 +403,7 @@ async function parseWithAi(rt: Runtime, text: string): Promise<Parsed> {
       "Ты — fallback-маршрутизатор личного помощника Глаша. Используйся только когда deterministic parser не смог уверенно понять фразу. " +
       "Не придумывай дату, время, человека, сумму или другие отсутствующие факты. Если обязательных данных не хватает, needs_clarification=true и задай ОДИН короткий вопрос. " +
       "Личная задача -> create_task area=personal. Очевидный рабочий контекст -> create_task area=work. " +
-      "Будущий звонок/сообщение с датой -> create_task, а немедленный звонок/Telegram -> contact_action. " +
+      "Будущий звонок/сообщение с датой -> create_task, а немедленный звонок/Telegram/email/показ номера -> contact_action. " +
       "Врач с датой/временем -> create_event event_kind=appointment area=health. Тренировка -> log_health health_kind=fitness. " +
       "Вопрос про уже сохранённые дела -> query_schedule. Свободное время -> check_availability. Поиск metadata документа -> find_document. " +
       "Открыть сервис -> open_service. Перенести существующую задачу между личным и работой -> move_task; заполни task_query и target_area. " +
@@ -559,7 +576,9 @@ async function querySchedule(rt: Runtime, range: "today" | "tomorrow" | "week" |
   let taskQuery = rt.supabase.from("tasks")
     .select("id,title,area,due_date,due_time,status,priority,goal_id")
     .eq("user_id", rt.userId)
+    .is("parent_task_id", null)
     .neq("status", "done")
+    .neq("status", "cancelled")
     .order("due_date", { ascending: true })
     .order("due_time", { ascending: true });
   if (range !== "all") taskQuery = taskQuery.gte("due_date", bounds.start).lte("due_date", bounds.end);
@@ -641,7 +660,7 @@ async function checkAvailability(rt: Runtime, startAt: string, durationMinutes =
 async function findDocument(rt: Runtime, query: string) {
   const { data, error } = await tracked(rt,
     rt.supabase.from("documents")
-      .select("id,title,owner_person,document_type,expiry_date,tags,storage_path,mime_type,size_bytes,created_at")
+      .select("id,title,owner_person,owner_name,document_type,expiry_date,tags,storage_path,mime_type,size_bytes,created_at")
       .eq("user_id", rt.userId)
       .order("created_at", { ascending: false })
       .limit(200)
@@ -650,7 +669,7 @@ async function findDocument(rt: Runtime, query: string) {
 
   const wanted = normalize(query);
   const matches = (data ?? []).filter((doc) => {
-    const haystack = [doc.title, doc.owner_person, doc.document_type, ...(doc.tags ?? [])]
+    const haystack = [doc.title, doc.owner_person, doc.owner_name, doc.document_type, ...(doc.tags ?? [])]
       .filter(Boolean).join(" ").toLocaleLowerCase("ru-RU");
     return haystack.includes(wanted) || wanted.split(/\s+/).some((part) => part.length > 3 && haystack.includes(part));
   }).slice(0, 10);
@@ -740,31 +759,131 @@ async function moveTask(rt: Runtime, taskQuery: string | null, area: "personal" 
   }
 
   const { data, error } = await tracked(rt,
-    rt.supabase.from("tasks")
-      .update({ area, updated_at: new Date().toISOString() })
-      .eq("user_id", rt.userId)
-      .eq("id", before.id)
-      .select("id,title,area,due_date,due_time,reminder_at,priority,status,goal_id,parent_task_id,is_project")
-      .single()
+    rt.supabase.rpc("glasha_move_task_area", {
+      p_task_id: before.id,
+      p_area: area,
+      p_move_children: true,
+    })
   );
   if (error) throw error;
 
+  const rows = (data ?? []) as Array<{ id: string; title: string; area: string; status: string; parent_task_id: string | null; is_project: boolean }>;
   return {
-    data: [{
-      ...data,
+    data: rows.map((row) => ({
+      ...row,
       previous_area: before.area,
-      preserved: {
-        id: data.id === before.id,
-        due_date: data.due_date === before.due_date,
-        due_time: String(data.due_time || "") === String(before.due_time || ""),
-        reminder_at: data.reminder_at === before.reminder_at,
-        priority: data.priority === before.priority,
-        status: data.status === before.status,
-        goal_id: data.goal_id === before.goal_id,
-        parent_task_id: data.parent_task_id === before.parent_task_id,
-      },
-    }],
-    reply: `Переместила «${before.title}» в «${area === "work" ? "Работа" : "Личное"}». Задача осталась той же, без дубля.`,
+      preserved_id: row.id === before.id || Boolean(row.parent_task_id),
+    })),
+    reply: rows.length > 1
+      ? `Переместила «${before.title}» и ${rows.length - 1} подзадач в «${area === "work" ? "Работа" : "Личное"}». ID и связи сохранены.`
+      : `Переместила «${before.title}» в «${area === "work" ? "Работа" : "Личное"}». Задача осталась той же, без дубля.`,
+  };
+}
+
+async function completeTask(rt: Runtime, taskQuery: string) {
+  const resolved = await resolveTaskForAction(rt, taskQuery);
+  if (!resolved.task) return { needs_clarification: true, reply: resolved.clarification || "Какую задачу отметить выполненной?" };
+  const task = resolved.task;
+
+  const { data: children, error: childrenError } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .select("id,title,status")
+      .eq("user_id", rt.userId)
+      .eq("parent_task_id", task.id)
+      .neq("status", "cancelled")
+      .order("sort_order")
+  );
+  if (childrenError) throw childrenError;
+
+  if ((children ?? []).some((child) => child.status !== "done")) {
+    const done = (children ?? []).filter((child) => child.status === "done").length;
+    return {
+      needs_clarification: false,
+      data: children,
+      reply: `«${task.title}» — проект. Сначала заверши подзадачи: выполнено ${done} из ${children?.length || 0}.`,
+    };
+  }
+
+  if (task.status === "done") {
+    return { data: [{ ...task }], reply: `«${task.title}» уже выполнена.` };
+  }
+
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .update({ status: "done", updated_at: new Date().toISOString() })
+      .eq("user_id", rt.userId)
+      .eq("id", task.id)
+      .select("id,title,area,status,completed_at,parent_task_id,is_project")
+      .single()
+  );
+  if (error) throw error;
+  return { data: [data], reply: `Задача выполнена: «${task.title}».` };
+}
+
+async function restoreTask(rt: Runtime, taskQuery: string) {
+  const resolved = await resolveTaskForAction(rt, taskQuery);
+  if (!resolved.task) return { needs_clarification: true, reply: resolved.clarification || "Какую задачу вернуть в дела?" };
+  const task = resolved.task;
+  const nextStatus = task.is_project ? "doing" : "todo";
+
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .eq("user_id", rt.userId)
+      .eq("id", task.id)
+      .select("id,title,area,status,completed_at,parent_task_id,is_project")
+      .single()
+  );
+  if (error) throw error;
+  return {
+    data: [{ ...data, preserved_id: data.id === task.id }],
+    reply: `Вернула «${task.title}» в дела без создания новой задачи.`,
+  };
+}
+
+async function queryAchievements(rt: Runtime) {
+  const since = new Date(Date.now() - 14 * 24 * 60 * 60_000).toISOString();
+  const { data: parents, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .select("id,title,area,status,completed_at,is_project")
+      .eq("user_id", rt.userId)
+      .is("parent_task_id", null)
+      .eq("status", "done")
+      .gte("completed_at", since)
+      .order("completed_at", { ascending: false })
+      .limit(100)
+  );
+  if (error) throw error;
+
+  const ids = (parents ?? []).map((item) => item.id);
+  let children: Array<{ id: string; title: string; status: string; parent_task_id: string | null; completed_at: string | null }> = [];
+  if (ids.length) {
+    const childRes = await tracked(rt,
+      rt.supabase.from("tasks")
+        .select("id,title,status,parent_task_id,completed_at")
+        .eq("user_id", rt.userId)
+        .in("parent_task_id", ids)
+        .order("sort_order")
+    );
+    if (childRes.error) throw childRes.error;
+    children = childRes.data ?? [];
+  }
+
+  const data = (parents ?? []).map((parent) => {
+    const nested = children.filter((child) => child.parent_task_id === parent.id);
+    const completed = nested.filter((child) => child.status === "done").length;
+    return {
+      ...parent,
+      completed_subtasks: completed,
+      total_subtasks: nested.length,
+      progress_percent: nested.length ? Math.round((completed / nested.length) * 100) : 100,
+      children: nested,
+    };
+  });
+
+  return {
+    data,
+    reply: data.length ? `За последние 14 дней выполнено крупных задач: ${data.length}.` : "За последние 14 дней завершённых крупных задач пока нет.",
   };
 }
 
@@ -877,7 +996,11 @@ async function openService(rt: Runtime, serviceName: string) {
       wanted.includes(normalize(item.display_name)) ||
       aliases.some((alias: string) => normalize(alias) === wanted || normalize(alias).includes(wanted) || wanted.includes(normalize(alias)));
   });
-  if (!connection) return { reply: "Такого приложения в «Подключениях» пока нет." };
+  if (!connection) {
+    const contactResult = await contactAction(rt, { contactName: serviceName, method: "show_phone" });
+    if (!String(contactResult.reply || "").startsWith("Контакт не найден")) return contactResult;
+    return { reply: "Такого приложения или контакта пока нет." };
+  }
   if (!connection.enabled) return { reply: `${connection.display_name} скрыто в «Подключениях». Включи его, чтобы открывать командой.` };
 
   const nativeUrl = connection.deep_link || connection.url_scheme;
@@ -904,18 +1027,116 @@ async function openService(rt: Runtime, serviceName: string) {
   };
 }
 
-async function contactAction(rt: Runtime, input: { contactName: string; method: "call" | "telegram" | "email"; messageText?: string | null }) {
+function contactPhones(contact: Contact) {
+  const values = Array.isArray(contact.phone_numbers) ? contact.phone_numbers : [];
+  const merged = [
+    ...values.map((item) => ({
+      label: String(item.label || "основной"),
+      value: String(item.value || ""),
+      normalized: normalizePhone(String(item.normalized || item.value || "")),
+    })),
+    ...(contact.phone ? [{ label: "основной", value: contact.phone, normalized: normalizePhone(contact.phone) }] : []),
+  ].filter((item) => item.normalized);
+
+  const unique = new Map<string,{ label: string; value: string; normalized: string }>();
+  for (const item of merged) if (!unique.has(item.normalized)) unique.set(item.normalized, item);
+  return [...unique.values()];
+}
+
+function contactEmails(contact: Contact) {
+  const values = Array.isArray(contact.emails) ? contact.emails : [];
+  const merged = [
+    ...values.map((item) => ({ label: String(item.label || "основной"), value: String(item.value || "").trim() })),
+    ...(contact.email ? [{ label: "основной", value: contact.email }] : []),
+  ].filter((item) => item.value);
+  const unique = new Map<string,{ label: string; value: string }>();
+  for (const item of merged) {
+    const key = item.value.toLocaleLowerCase("en-US");
+    if (!unique.has(key)) unique.set(key, item);
+  }
+  return [...unique.values()];
+}
+
+function contactMatchScore(contact: Contact, query: string) {
+  const variants = contactQueryVariants(query);
+  const fields = [
+    normalizeContactKey(contact.name),
+    normalizeContactKey(contact.relation || ""),
+    ...((contact.aliases || []).map(normalizeContactKey)),
+  ].filter(Boolean);
+
+  let score = 0;
+  for (const variant of variants) {
+    for (const field of fields) {
+      if (variant === field) score = Math.max(score, 100);
+      else if (field.startsWith(variant) || variant.startsWith(field)) score = Math.max(score, 80);
+      else if (field.includes(variant) || variant.includes(field)) score = Math.max(score, 60);
+    }
+  }
+  return score;
+}
+
+async function contactAction(rt: Runtime, input: { contactName: string; method: "call" | "telegram" | "email" | "show_phone"; messageText?: string | null }) {
   const contacts = await loadContacts(rt);
-  const wanted = normalize(input.contactName);
-  const contact = contacts.find((item) => normalize(item.name) === wanted)
-    ?? contacts.find((item) => normalize(item.name).includes(wanted) || wanted.includes(normalize(item.name)));
-  if (!contact) return { reply: "Контакт не найден. Добавь его в раздел «Контакты»." };
+  const scored = contacts
+    .map((contact) => ({ contact, score: contactMatchScore(contact, input.contactName) }))
+    .filter((item) => item.score > 0)
+    .sort((a,b) => b.score - a.score || a.contact.name.localeCompare(b.contact.name, "ru"));
+
+  if (!scored.length) return { reply: "Контакт не найден. Добавь его в раздел «Контакты»." };
+
+  const topScore = scored[0].score;
+  const top = scored.filter((item) => item.score === topScore);
+  if (top.length > 1) {
+    return {
+      needs_clarification: true,
+      data: top.slice(0,6).map(({ contact }) => ({
+        id: contact.id,
+        title: contact.name,
+        subtitle: contact.relation || "контакт",
+      })),
+      reply: `Нашла несколько контактов: ${top.slice(0,6).map(({ contact }) => contact.name).join(", ")}. Уточни, кого выбрать.`,
+    };
+  }
+
+  const contact = top[0].contact;
+  const phones = contactPhones(contact);
+  const emails = contactEmails(contact);
+
+  if (input.method === "show_phone") {
+    if (!phones.length) return { reply: `У ${contact.name} не сохранён телефон.` };
+    return {
+      data: phones.map((phone,index) => ({
+        id: `${contact.id}-phone-${index}`,
+        title: `${contact.name} · ${phone.label}`,
+        phone: phone.value,
+        action_url: `tel:${phone.normalized}`,
+        requires_confirmation: true,
+      })),
+      reply: phones.length === 1
+        ? `У ${contact.name} один номер.`
+        : `У ${contact.name} несколько номеров. Выбери нужный.`,
+    };
+  }
 
   if (input.method === "call") {
-    if (!contact.phone) return { reply: `У ${contact.name} не сохранён телефон.` };
+    if (!phones.length) return { reply: `У ${contact.name} не сохранён телефон.` };
+    if (phones.length > 1) {
+      return {
+        needs_clarification: true,
+        data: phones.map((phone,index) => ({
+          id: `${contact.id}-phone-${index}`,
+          title: `${contact.name} · ${phone.label}`,
+          phone: phone.value,
+          action_url: `tel:${phone.normalized}`,
+          requires_confirmation: true,
+        })),
+        reply: `${contact.name}: ${phones.map((phone) => phone.label).join(" или ")}? Выбери номер.`,
+      };
+    }
     return {
-      data: [{ id: contact.id, title: `Позвонить ${contact.name}`, action_url: `tel:${contact.phone}`, requires_confirmation: true }],
-      reply: `Нашла номер ${contact.name}. Нажми «Позвонить», чтобы начать вызов.`,
+      data: [{ id: contact.id, title: `Позвонить ${contact.name}`, action_url: `tel:${phones[0].normalized}`, requires_confirmation: true }],
+      reply: `Нашла номер ${contact.name}. Нажми «Позвонить», чтобы открыть системный набор номера.`,
     };
   }
 
@@ -938,12 +1159,25 @@ async function contactAction(rt: Runtime, input: { contactName: string; method: 
     };
   }
 
-  if (!contact.email) return { reply: `У ${contact.name} не сохранён email.` };
+  if (!emails.length) return { reply: `У ${contact.name} не сохранён email.` };
+  if (emails.length > 1) {
+    return {
+      needs_clarification: true,
+      data: emails.map((email,index) => ({
+        id: `${contact.id}-email-${index}`,
+        title: `${contact.name} · ${email.label}`,
+        email: email.value,
+        action_url: `mailto:${email.value}`,
+        requires_confirmation: true,
+      })),
+      reply: `У ${contact.name} несколько email. Выбери нужный.`,
+    };
+  }
   return {
     data: [{
       id: contact.id,
       title: `Написать ${contact.name}`,
-      action_url: `mailto:${contact.email}${input.messageText ? `?body=${encodeURIComponent(input.messageText)}` : ""}`,
+      action_url: `mailto:${emails[0].value}${input.messageText ? `?body=${encodeURIComponent(input.messageText)}` : ""}`,
       requires_confirmation: true,
     }],
     reply: "Письмо подготовлено, но не отправлено.",
@@ -1052,6 +1286,72 @@ async function advise(rt: Runtime, question: string, goalTitle: string | null, e
   return { reply: response.output_text, data: tasks ?? [], model_tier: selection.tier };
 }
 
+async function createReminderFast(
+  rt: Runtime,
+  input: { title: string; dateToken: string; time: string; recurrence: "none" | "daily" | "weekly" | "monthly" },
+) {
+  const profile = await loadProfile(rt);
+  const date = resolveDateToken(input.dateToken, profile.timezone);
+  const dueAt = zonedDateTimeToUtc(date, input.time, profile.timezone).toISOString();
+  const lowerTitle = normalize(input.title);
+  const category =
+    /оплат|плат[её]ж|сч[её]т|интернет|квартплат|коммун/i.test(lowerTitle) ? "payment" :
+    /лекар|таблет|врач|здоров|анализ|витамин/i.test(lowerTitle) ? "health" :
+    "general";
+
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("reminders").insert({
+      user_id: rt.userId,
+      title: input.title,
+      priority: "normal",
+      category,
+      recurrence: input.recurrence,
+      recurrence_interval: 1,
+      due_at: dueAt,
+      next_occurrence_at: dueAt,
+      active: true,
+    }).select("id,title,due_at,next_occurrence_at,recurrence,priority,category").single()
+  );
+  if (error) throw error;
+  return {
+    data,
+    reply: input.recurrence === "none"
+      ? `Напомню ${date} в ${input.time}: ${input.title}.`
+      : `Создала ${input.recurrence === "daily" ? "ежедневное" : input.recurrence === "weekly" ? "еженедельное" : "ежемесячное"} напоминание на ${input.time}: ${input.title}.`,
+  };
+}
+
+async function queryOverdue(rt: Runtime) {
+  const profile = await loadProfile(rt);
+  const today = localDate(profile.timezone);
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .select("id,title,area,due_date,due_time,priority,status,parent_task_id,is_project")
+      .eq("user_id", rt.userId)
+      .is("parent_task_id", null)
+      .neq("status", "done")
+      .neq("status", "cancelled")
+      .lt("due_date", today)
+      .order("due_date", { ascending: true })
+      .limit(100)
+  );
+  if (error) throw error;
+  return {
+    data: data ?? [],
+    reply: data?.length ? `Просроченных задач: ${data.length}.` : "Просроченных задач нет.",
+  };
+}
+
+async function globalSearchFast(rt: Runtime, query: string) {
+  // One RLS-aware RPC; no database content is sent to AI.
+  rt.metrics.supabaseQueries += 1;
+  const results = await searchLife(rt.supabase, rt.userId, query);
+  return {
+    data: results,
+    reply: results.length ? `Нашла совпадений: ${results.length}.` : `По запросу «${query}» ничего не нашла.`,
+  };
+}
+
 async function executeDeterministic(rt: Runtime, route: DeterministicRoute, rawText: string) {
   rt.metrics.intent = route.kind;
 
@@ -1064,7 +1364,13 @@ async function executeDeterministic(rt: Runtime, route: DeterministicRoute, rawT
   });
 
   if (route.kind === "query_schedule") return querySchedule(rt, route.range);
+  if (route.kind === "query_overdue") return queryOverdue(rt);
+  if (route.kind === "global_search") return globalSearchFast(rt, route.query);
+  if (route.kind === "create_reminder") return createReminderFast(rt, route);
   if (route.kind === "move_task") return moveTask(rt, route.taskQuery, route.area);
+  if (route.kind === "complete_task") return completeTask(rt, route.taskQuery);
+  if (route.kind === "restore_task") return restoreTask(rt, route.taskQuery);
+  if (route.kind === "query_achievements") return queryAchievements(rt);
   if (route.kind === "split_task") return splitTask(rt, route.taskQuery);
 
   if (route.kind === "create_expense") return createExpense(rt, {
@@ -1349,7 +1655,7 @@ export async function POST(request: Request) {
     } else {
       const summary = actionSummary(executed);
       const firstReadable = executed.find((item) =>
-        ["query_schedule","query_expenses","check_availability","find_document","open_service","contact_action","search_tickets","move_task","split_task","advice"].includes(item.action)
+        ["query_schedule","query_overdue","global_search","create_reminder","query_expenses","check_availability","find_document","open_service","contact_action","search_tickets","move_task","split_task","advice"].includes(item.action)
       );
       const reply = [
         summary,

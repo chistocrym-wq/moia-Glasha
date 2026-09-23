@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - prototype/glasha-v1
+      - feature/glasha-life-os
   pull_request:
     branches:
       - main

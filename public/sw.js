@@ -1,4 +1,4 @@
-const CACHE_VERSION = "glasha-shell-v6";
+const CACHE_VERSION = "glasha-shell-v7";
 const CORE = [
   "/offline.html",
   "/manifest.webmanifest",

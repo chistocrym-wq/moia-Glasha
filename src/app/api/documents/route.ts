@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     if (id) {
       const { data, error } = await supabase
         .from("documents")
-        .select("id,title,owner_person,document_type,expiry_date,tags,storage_path,mime_type,size_bytes,created_at")
+        .select("id,title,owner_person,owner_name,document_type,expiry_date,tags,storage_path,mime_type,size_bytes,created_at")
         .eq("user_id", user.id)
         .eq("id", id)
         .maybeSingle();
@@ -47,6 +47,7 @@ export async function GET(request: Request) {
           id: data.id,
           title: data.title,
           owner_person: data.owner_person,
+          owner_name: data.owner_name,
           document_type: data.document_type,
           expiry_date: data.expiry_date,
           tags: data.tags,
@@ -60,7 +61,7 @@ export async function GET(request: Request) {
 
     const { data, error } = await supabase
       .from("documents")
-      .select("id,title,owner_person,document_type,expiry_date,tags,mime_type,size_bytes,created_at")
+      .select("id,title,owner_person,owner_name,document_type,expiry_date,tags,mime_type,size_bytes,created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(200);
@@ -71,6 +72,7 @@ export async function GET(request: Request) {
       const haystack = [
         doc.title,
         doc.owner_person,
+        doc.owner_name,
         doc.document_type,
         ...(doc.tags ?? []),
       ].filter(Boolean).join(" ").toLocaleLowerCase("ru-RU");

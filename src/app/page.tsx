@@ -3,8 +3,11 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AssistantAvatar, GlashaCharacter, type GlashaImage } from "@/components/GlashaCharacter";
 import { InstallGlashaTile } from "@/components/PwaClient";
+import LifeOsHome from "@/components/LifeOsHome";
+import PhonebookImport from "@/components/PhonebookImport";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { deterministicRoute } from "@/lib/deterministic-router";
+import { speechText } from "@/lib/voice-output";
 import {
   askAdvisor,
   getSystemStatus,
@@ -22,7 +25,7 @@ import {
 } from "@/lib/document-upload";
 
 type SectionId =
-  | "home" | "tasks" | "work" | "achievements" | "calendar" | "finance" | "health"
+  | "home" | "tasks" | "work" | "calendar" | "achievements" | "finance" | "health"
   | "goals" | "learning" | "travel" | "documents" | "contacts" | "connections" | "quick" | "advisor" | "chat";
 
 type Task = {
@@ -39,6 +42,26 @@ type Task = {
   parentTaskId?: string;
   isProject?: boolean;
   completedAt?: string;
+  completedSubtasks?: number;
+  totalSubtasks?: number;
+};
+
+type RootTaskRow = {
+  id: string;
+  title: string;
+  area: string;
+  status: string;
+  due_date: string | null;
+  due_time: string | null;
+  reminder_at: string | null;
+  priority: string | null;
+  goal_id: string | null;
+  goal_title: string | null;
+  parent_task_id: string | null;
+  is_project: boolean;
+  completed_at: string | null;
+  completed_subtasks: number | string | null;
+  total_subtasks: number | string | null;
 };
 
 type Expense = {
@@ -56,8 +79,22 @@ type Note = { id: string; text: string; createdAt: string };
 type Goal = { id: string; title: string; kind: "Мечта" | "Цель"; targetDate?: string; description?: string };
 type HealthEvent = { id: string; kind: string; occurredAt: string; title?: string };
 type ExpenseCategory = { id: string; name: string; slug: string };
-type DocumentItem = { id: string; title: string; ownerPerson: string; documentType: string; expiryDate?: string; tags: string[]; mimeType?: string; sizeBytes?: number };
-type ContactItem = { id: string; name: string; relation?: string; phone?: string; email?: string; telegramUsername?: string };
+type DocumentItem = { id: string; title: string; ownerPerson: string; ownerName?: string; documentType: string; expiryDate?: string; tags: string[]; mimeType?: string; sizeBytes?: number };
+type ContactPhone = { label: string; value: string; normalized: string };
+type ContactEmail = { label: string; value: string };
+type ContactItem = {
+  id: string;
+  name: string;
+  relation?: string;
+  phone?: string;
+  email?: string;
+  telegramUsername?: string;
+  phoneNumbers: ContactPhone[];
+  emails: ContactEmail[];
+  aliases: string[];
+  source?: string;
+  sourceUid?: string;
+};
 type ConnectionItem = {
   id: string;
   service: string;
@@ -157,12 +194,48 @@ export default function Home() {
   const [advisorQuestion, setAdvisorQuestion] = useState("");
   const [advisorAnswer, setAdvisorAnswer] = useState("");
   const [advisorBusy, setAdvisorBusy] = useState(false);
+  const [voiceReplies, setVoiceReplies] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const voiceChunksRef = useRef<BlobPart[]>([]);
 
   const current = sections.find((item) => item.id === active) ?? sections[0];
   const liveData = authState === "signed_in" && Boolean(userId);
+
+  useEffect(() => {
+    try { setVoiceReplies(window.localStorage.getItem("glasha_voice_replies") === "1"); } catch { /* localStorage may be unavailable */ }
+    return () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+      mediaRecorderRef.current = null;
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    };
+  }, []);
+
+  function stopSpeaking() {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    setSpeaking(false);
+  }
+
+  function speakReply(value: string) {
+    const safe = speechText(value);
+    if (!safe || typeof window === "undefined" || !("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return false;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(safe);
+    utterance.lang = "ru-RU";
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+    return true;
+  }
+
+  function toggleVoiceReplies(enabled: boolean) {
+    setVoiceReplies(enabled);
+    try { window.localStorage.setItem("glasha_voice_replies", enabled ? "1" : "0"); } catch { /* preference remains in memory */ }
+    if (!enabled) stopSpeaking();
+  }
 
   function normalizeConnectionName(value?: string) {
     return String(value || "").trim().toLocaleLowerCase("ru-RU");
@@ -309,11 +382,10 @@ export default function Home() {
     if (!supabase || !userId) return;
 
     const [
-      taskRes, taskGoalRes, eventRes, eventAreaRes, expenseRes, noteRes, goalRes, healthRes,
+      taskRes, eventRes, eventAreaRes, expenseRes, noteRes, goalRes, healthRes,
       categoryRes, profileRes, documentRes, contactRes, connectionRes
     ] = await Promise.all([
-      supabase.from("tasks").select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at").eq("user_id", userId).order("due_date", { ascending: true }),
-      supabase.from("tasks").select("id,goal_id,goals(title)").eq("user_id", userId),
+      supabase.rpc("glasha_list_root_tasks"),
       supabase.from("calendar_events").select("id,title,start_at,kind").eq("user_id", userId).order("start_at", { ascending: true }).limit(100),
       supabase.from("calendar_events").select("id,area,end_at").eq("user_id", userId).limit(100),
       supabase.from("expenses").select("id,amount,currency,occurred_at,merchant,note,expense_categories(name,slug)").eq("user_id", userId).order("occurred_at", { ascending: false }).limit(300),
@@ -322,8 +394,8 @@ export default function Home() {
       supabase.from("health_events").select("id,kind,occurred_at,title").eq("user_id", userId).order("occurred_at", { ascending: false }).limit(100),
       supabase.from("expense_categories").select("id,name,slug").eq("user_id", userId).order("sort_order"),
       supabase.from("profiles").select("default_currency").eq("id", userId).maybeSingle(),
-      supabase.from("documents").select("id,title,owner_person,document_type,expiry_date,tags,mime_type,size_bytes").eq("user_id", userId).order("created_at", { ascending: false }).limit(100),
-      supabase.from("contacts").select("id,name,relation,phone,email,telegram_username").eq("user_id", userId).order("name").limit(200),
+      supabase.from("documents").select("id,title,owner_person,owner_name,document_type,expiry_date,tags,mime_type,size_bytes").eq("user_id", userId).order("created_at", { ascending: false }).limit(100),
+      supabase.from("contacts").select("id,name,relation,phone,email,telegram_username,phone_numbers,emails,aliases,source,source_uid").eq("user_id", userId).order("name").limit(5000),
       supabase.from("connections").select("id,service,display_name,platform,open_url,deep_link,url_scheme,universal_link,web_fallback_url,capability,enabled,icon,aliases").eq("user_id", userId).order("display_name"),
     ]);
 
@@ -333,26 +405,23 @@ export default function Home() {
       return;
     }
 
-    setTasks((taskRes.data ?? []).map((row) => {
-      const extra = taskGoalRes.error ? null : (taskGoalRes.data ?? []).find((item) => item.id === row.id);
-      const relation = extra?.goals as unknown;
-      const goal = Array.isArray(relation) ? relation[0] : relation as { title?: string } | null;
-      return {
-        id: row.id,
-        title: row.title,
-        area: row.area === "work" ? "Работа" : "Личное",
-        done: row.status === "done",
-        dueDate: row.due_date || undefined,
-        time: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
-        reminderAt: row.reminder_at || undefined,
-        priority: row.priority || undefined,
-        goalId: row.goal_id || extra?.goal_id || undefined,
-        goalTitle: goal?.title || undefined,
-        parentTaskId: row.parent_task_id || undefined,
-        isProject: Boolean(row.is_project),
-        completedAt: row.completed_at || undefined,
-      };
-    }));
+    setTasks((taskRes.data ?? []).map((row: RootTaskRow) => ({
+      id: row.id,
+      title: row.title,
+      area: row.area === "work" ? "Работа" : "Личное",
+      done: row.status === "done",
+      dueDate: row.due_date || undefined,
+      time: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
+      reminderAt: row.reminder_at || undefined,
+      priority: row.priority || undefined,
+      goalId: row.goal_id || undefined,
+      goalTitle: row.goal_title || undefined,
+      parentTaskId: row.parent_task_id || undefined,
+      isProject: Boolean(row.is_project),
+      completedAt: row.completed_at || undefined,
+      completedSubtasks: Number(row.completed_subtasks || 0),
+      totalSubtasks: Number(row.total_subtasks || 0),
+    })));
 
     setEvents((eventRes.data ?? []).map((row) => {
       const extra = eventAreaRes.error ? null : (eventAreaRes.data ?? []).find((item) => item.id === row.id);
@@ -409,6 +478,7 @@ export default function Home() {
       id: row.id,
       title: row.title,
       ownerPerson: row.owner_person,
+      ownerName: row.owner_name || undefined,
       documentType: row.document_type,
       expiryDate: row.expiry_date || undefined,
       tags: row.tags ?? [],
@@ -422,6 +492,11 @@ export default function Home() {
       phone: row.phone || undefined,
       email: row.email || undefined,
       telegramUsername: row.telegram_username || undefined,
+      phoneNumbers: Array.isArray(row.phone_numbers) ? row.phone_numbers as ContactPhone[] : [],
+      emails: Array.isArray(row.emails) ? row.emails as ContactEmail[] : [],
+      aliases: row.aliases ?? [],
+      source: row.source || undefined,
+      sourceUid: row.source_uid || undefined,
     })));
     setConnections(connectionRes.error ? [] : (connectionRes.data ?? []).map((row) => ({
       id: row.id,
@@ -439,22 +514,52 @@ export default function Home() {
       aliases: row.aliases ?? [],
     })));
 
-    if (taskGoalRes.error || eventAreaRes.error || documentRes.error || contactRes.error || connectionRes.error) {
+    if (eventAreaRes.error || documentRes.error || contactRes.error || connectionRes.error) {
       setAnswer("Основная база подключена. Для новых функций Daily Core нужно применить migration 002.");
     }
   }
 
   async function refreshTasksOnly() {
     if (!supabase || !userId) return;
-    const { data, error } = await supabase.from("tasks")
-      .select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at,goals(title)")
-      .eq("user_id", userId)
-      .order("due_date", { ascending: true });
+    const { data, error } = await supabase.rpc("glasha_list_root_tasks");
     if (error) {
       console.error("refresh_tasks_failed", error);
       return;
     }
-    setTasks((data ?? []).map((row) => {
+    setTasks((data ?? []).map((row: RootTaskRow) => ({
+      id: row.id,
+      title: row.title,
+      area: row.area === "work" ? "Работа" : "Личное",
+      done: row.status === "done",
+      dueDate: row.due_date || undefined,
+      time: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
+      reminderAt: row.reminder_at || undefined,
+      priority: row.priority || undefined,
+      goalId: row.goal_id || undefined,
+      goalTitle: row.goal_title || undefined,
+      parentTaskId: row.parent_task_id || undefined,
+      isProject: Boolean(row.is_project),
+      completedAt: row.completed_at || undefined,
+      completedSubtasks: Number(row.completed_subtasks || 0),
+      totalSubtasks: Number(row.total_subtasks || 0),
+    })));
+  }
+
+  async function loadTaskChildren(parentId: string) {
+    if (!supabase || !userId) return;
+    const { data, error } = await supabase.from("tasks")
+      .select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at,goals(title)")
+      .eq("user_id", userId)
+      .eq("parent_task_id", parentId)
+      .neq("status", "cancelled")
+      .order("sort_order")
+      .order("created_at");
+    if (error) {
+      console.error("load_task_children_failed", error);
+      setAnswer("Не получилось загрузить подзадачи.");
+      return;
+    }
+    const children: Task[] = (data ?? []).map((row) => {
       const relation = row.goals as unknown;
       const goal = Array.isArray(relation) ? relation[0] : relation as { title?: string } | null;
       return {
@@ -472,7 +577,8 @@ export default function Home() {
         isProject: Boolean(row.is_project),
         completedAt: row.completed_at || undefined,
       };
-    }));
+    });
+    setTasks((items) => [...items.filter((item) => item.parentTaskId !== parentId), ...children]);
   }
 
   async function refreshEventsAndHealth() {
@@ -568,7 +674,7 @@ export default function Home() {
 
   async function refreshAfterAssistantAction(action?: string) {
     if (!action) return;
-    if (action === "create_task" || action === "move_task" || action === "split_task") return refreshTasksOnly();
+    if (action === "create_task" || action === "move_task" || action === "split_task" || action === "complete_task" || action === "restore_task" || action === "query_achievements") return refreshTasksOnly();
     if (action === "create_expense") return refreshExpensesOnly();
     if (action === "create_event" || action === "create_appointment" || action === "log_health" || action === "log_fitness" || action === "cycle_start") {
       return refreshEventsAndHealth();
@@ -602,6 +708,10 @@ export default function Home() {
 
   async function signOut() {
     if (!supabase) return;
+    stopSpeaking();
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
     await supabase.auth.signOut();
     setUserId(null);
     setAuthState("signed_out");
@@ -611,6 +721,18 @@ export default function Home() {
   async function processCommand(raw: string, source: "text" | "voice" = "text") {
     const text = raw.trim();
     if (!text) return;
+    stopSpeaking();
+
+    if (/^(?:глаша[,.]?\s*)?(?:стоп|останови\s+озвучку|замолчи)$/i.test(text)) {
+      if (liveData) void logLocalRoute("voice_stop", Date.now());
+      return;
+    }
+    if (/^(?:глаша[,.]?\s*)?(?:прочитай\s+ответ|озвучь\s+ответ)$/i.test(text)) {
+      const spoken = speakReply(answer);
+      if (!spoken) setAnswer("Этот ответ нельзя безопасно озвучить или браузер не поддерживает озвучивание.");
+      if (liveData) void logLocalRoute("voice_read_answer", Date.now());
+      return;
+    }
 
     if (!liveData) {
       setAnswer("Эта команда уже переведена на настоящий backend, но сейчас backend ещё не подключён к твоему аккаунту.");
@@ -623,27 +745,29 @@ export default function Home() {
       const connection = findConnectionByName(localRoute.service);
       setLastResult(null);
       if (!connection) {
-        setAnswer("Такого приложения в «Подключениях» пока нет.");
-        void logLocalRoute("open_service_not_found", localStartedAt);
-        return;
-      }
-      const opened = openConnectionTarget(connection);
-      setAnswer(
-        connection.capability === "OPEN_ONLY"
+        // Do not stop here: the server first checks known connections, then exact/alias contacts.
+        // It remains deterministic/Supabase-only and does not call OpenAI.
+      } else {
+        const opened = openConnectionTarget(connection);
+        const reply = connection.capability === "OPEN_ONLY"
           ? `Открываю ${connection.displayName}. Это только запуск приложения/сайта — аккаунт к Глаше не подключён.`
           : opened
             ? `Открываю ${connection.displayName}. Возможность: ${connection.capability}.`
-            : `Для ${connection.displayName} пока нет рабочей ссылки.`
-      );
-      void logLocalRoute("open_service", localStartedAt);
-      return;
+            : `Для ${connection.displayName} пока нет рабочей ссылки.`;
+        setAnswer(reply);
+        if (voiceReplies) speakReply(reply);
+        void logLocalRoute("open_service", localStartedAt);
+        return;
+      }
     }
 
     setBusy(true);
     setLastResult(null);
     try {
       const result = await sendAssistantCommand(text, source);
-      setAnswer(result.reply || "Готово.");
+      const reply = result.reply || "Готово.";
+      setAnswer(reply);
+      if (voiceReplies) speakReply(reply);
       setLastResult(result);
       if (result.action === "open_service" && Array.isArray(result.data)) {
         const row = result.data[0] as {
@@ -760,7 +884,7 @@ export default function Home() {
     }
     const task = tasks.find((item) => item.id === id);
     if (!task) return;
-    if (tasks.some((item) => item.parentTaskId === id)) {
+    if (tasks.some((item) => item.parentTaskId === id) && !task.done) {
       setAnswer("Крупная задача завершится автоматически, когда будут выполнены все её подзадачи.");
       return;
     }
@@ -769,7 +893,7 @@ export default function Home() {
       .update({ status: nextStatus, updated_at: new Date().toISOString() })
       .eq("user_id", userId)
       .eq("id", id);
-    if (error) setAnswer("Не смогла изменить задачу.");
+    if (error) setAnswer(error.message.includes("project_has_incomplete_subtasks") ? "Сначала заверши все подзадачи проекта." : "Не смогла изменить задачу.");
     else {
       await refreshTasksOnly();
       setAnswer(nextStatus === "done" ? "Отметила как выполненное." : "Вернула задачу в работу.");
@@ -784,21 +908,35 @@ export default function Home() {
     const task = tasks.find((item) => item.id === id);
     if (!task || task.area === targetArea) return;
 
-    const { data, error } = await supabase.from("tasks")
-      .update({ area: targetArea === "Работа" ? "work" : "personal", updated_at: new Date().toISOString() })
-      .eq("user_id", userId)
-      .eq("id", id)
-      .select("id,area")
-      .single();
-
+    const { error } = await supabase.rpc("glasha_move_task_area", {
+      p_task_id: id,
+      p_area: targetArea === "Работа" ? "work" : "personal",
+      p_move_children: true,
+    });
     if (error) {
       console.error("move_task_failed", { code: error.code, message: error.message, taskId: id });
       setAnswer("Не получилось переместить задачу.");
       return;
     }
 
-    setTasks((items) => items.map((item) => item.id === data.id ? { ...item, area: data.area === "work" ? "Работа" : "Личное" } : item));
-    setAnswer(`Переместила «${task.title}» в «${targetArea}». Остальные данные задачи сохранены.`);
+    await refreshTasksOnly();
+    setAnswer(`Переместила «${task.title}» в «${targetArea}» вместе с подзадачами. ID и связи сохранены.`);
+  }
+
+  async function restoreTaskDirect(id: string) {
+    if (!liveData || id.startsWith("sample-")) return;
+    const response = await fetch("/api/life/tasks", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ id, action: "restore" }),
+    });
+    if (!response.ok) {
+      setAnswer("Не получилось вернуть задачу в дела.");
+      return;
+    }
+    await refreshTasksOnly();
+    setAnswer("Вернула задачу в дела без создания копии.");
   }
 
   async function addSubtask(parentId: string) {
@@ -1100,7 +1238,11 @@ export default function Home() {
       phone,
       email: emailValue,
       telegram_username: telegram,
-    }).select("id,name,relation,phone,email,telegram_username").single();
+      phone_numbers: phone ? [{ label: "основной", value: phone, normalized: phone.replace(/[^0-9+]/g, "") }] : [],
+      emails: emailValue ? [{ label: "основной", value: emailValue }] : [],
+      aliases: relation ? [relation] : [],
+      source: "manual",
+    }).select("id,name,relation,phone,email,telegram_username,phone_numbers,emails,aliases,source,source_uid").single();
     if (error) setAnswer("Не смогла сохранить контакт. Проверь migration 002.");
     else {
       setContacts((items) => [{
@@ -1110,9 +1252,40 @@ export default function Home() {
         phone: data.phone || undefined,
         email: data.email || undefined,
         telegramUsername: data.telegram_username || undefined,
+        phoneNumbers: Array.isArray(data.phone_numbers) ? data.phone_numbers as ContactPhone[] : [],
+        emails: Array.isArray(data.emails) ? data.emails as ContactEmail[] : [],
+        aliases: data.aliases ?? [],
+        source: data.source || undefined,
+        sourceUid: data.source_uid || undefined,
       }, ...items]);
       setAnswer(`Сохранила контакт «${name.trim()}».`);
     }
+  }
+
+  async function refreshContactsOnly() {
+    if (!supabase || !userId) return;
+    const { data, error } = await supabase.from("contacts")
+      .select("id,name,relation,phone,email,telegram_username,phone_numbers,emails,aliases,source,source_uid")
+      .eq("user_id", userId)
+      .order("name")
+      .limit(5000);
+    if (error) {
+      console.error("refresh_contacts_failed", { code: error.code, message: error.message });
+      return;
+    }
+    setContacts((data ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      relation: row.relation || undefined,
+      phone: row.phone || undefined,
+      email: row.email || undefined,
+      telegramUsername: row.telegram_username || undefined,
+      phoneNumbers: Array.isArray(row.phone_numbers) ? row.phone_numbers as ContactPhone[] : [],
+      emails: Array.isArray(row.emails) ? row.emails as ContactEmail[] : [],
+      aliases: row.aliases ?? [],
+      source: row.source || undefined,
+      sourceUid: row.source_uid || undefined,
+    })));
   }
 
   async function saveDocumentToArchive(
@@ -1133,6 +1306,7 @@ export default function Home() {
         id: saved.id,
         title: saved.title,
         ownerPerson: saved.owner_person,
+        ownerName: saved.owner_name || undefined,
         documentType: saved.document_type,
         expiryDate: saved.expiry_date || undefined,
         tags: saved.tags ?? [],
@@ -1184,22 +1358,12 @@ export default function Home() {
     }
   }
 
-  const activeRootTasks = tasks.filter((item) => !item.parentTaskId && !item.done);
-  const pendingPersonal = activeRootTasks.filter((item) => item.area === "Личное").length;
-  const pendingWork = activeRootTasks.filter((item) => item.area === "Работа").length;
   const expenseTotals = useMemo(() => {
     const totals: Record<string, number> = {};
     for (const item of expenses) totals[item.currency] = (totals[item.currency] || 0) + item.amount;
     return totals;
   }, [expenses]);
   const financeTotalText = Object.entries(expenseTotals).map(([currency, amount]) => formatMoney(amount, currency)).join(" · ") || "0";
-  const todayOverview = [
-    { label: "Личных дел", value: pendingPersonal, tone: "pink" },
-    { label: "По работе", value: pendingWork, tone: "blue" },
-    { label: "Событий", value: events.length, tone: "green" },
-    { label: "Расходов", value: financeTotalText, tone: "yellow" },
-  ];
-
   const connectionText =
     authState === "setup" ? "РЕЖИМ НАСТРОЙКИ · данные на экране демонстрационные и не сохраняются"
     : authState === "signed_out" ? "SUPABASE ПОДКЛЮЧЁН · войди, чтобы открыть личные данные"
@@ -1240,6 +1404,11 @@ export default function Home() {
             <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Например: потратила 70 рублей на кофе…" disabled={busy}/>
             <button className="sendButton" disabled={busy}>{busy ? "Думаю…" : "Отправить"}</button>
           </form>
+          <div className="voiceReplyControls">
+            <label><input type="checkbox" checked={voiceReplies} onChange={(event) => toggleVoiceReplies(event.target.checked)} /> Глаша отвечает голосом</label>
+            {speaking && <button type="button" className="voiceStopButton" onClick={stopSpeaking}>■ Стоп</button>}
+            <button type="button" className="voiceReadButton" onClick={() => { if (!speakReply(answer)) setAnswer("Этот ответ нельзя безопасно озвучить или браузер не поддерживает озвучивание."); }}>Прочитать ответ</button>
+          </div>
           <div className="promptHints">
             <button onClick={() => setCommand("Потратила 70 рублей на кофе")}>+ расход</button>
             <button onClick={() => setCommand("Завтра по работе позвонить бухгалтеру")}>+ работа</button>
@@ -1249,14 +1418,7 @@ export default function Home() {
           {lastResult && <ResultPreview result={lastResult}/>}
         </div><div className="heroGlasha"><GlashaCharacter image="home" priority className="heroCharacter" alt="Глаша рядом" /><span className="speechBubble">Я рядом ♡</span></div></section>
 
-        <div className="overviewGrid">{todayOverview.map((x) => <article key={x.label} className={`statCard ${x.tone}`}><span>{x.label}</span><strong>{x.value}</strong></article>)}</div>
-
-        <div className="twoColumns"><section className="panel"><div className="panelHeader"><div><p className="eyebrow">Сейчас</p><h3>Что требует внимания</h3></div><button className="linkButton" onClick={() => setActive("tasks")}>Все дела →</button></div>
-          <div className="taskList">{activeRootTasks.slice(0, 5).map(t => { const children = tasks.filter(child => child.parentTaskId === t.id); const completed = children.filter(child => child.done).length; const percent = children.length ? Math.round((completed / children.length) * 100) : 0; return <div key={t.id} className="taskRow taskRowStatic"><button className="checkButton" onClick={() => children.length ? setActive(t.area === "Работа" ? "work" : "tasks") : toggleTask(t.id)} title={children.length ? "Открыть подзадачи" : "Отметить выполненной"}><span className="checkCircle"/></button><span className="taskText"><b>{t.title}</b><small>{t.area}{t.dueDate ? ` · ${t.dueDate}` : ""}{t.time ? ` · ${t.time}` : ""}</small>{children.length > 0 && <span className="projectProgress"><span><i style={{ width: `${percent}%` }}/></span><small>{completed} из {children.length} выполнено · {percent}%</small></span>}</span></div>; })}</div></section>
-          <section className="panel softPanel"><div className="panelHeader"><div><p className="eyebrow">Глаша заметила</p><h3>Не потерять</h3></div></div>
-            <div className="insight"><span className="insightIcon">✦</span><div><b>{notes.length ? `${notes.length} мыслей ждут разбора` : "Входящие мысли пусты"}</b><p>{notes.length ? "Их можно превратить в задачи, цели или просто оставить как мысли." : "Говори всё, что приходит в голову — я сохраню."}</p></div></div>
-            <div className="insight"><span className="insightIcon">☆</span><div><b>{goals.length ? `${goals.length} активных целей и мечт` : "Добавь первую мечту"}</b><p>Советчик сможет разложить цель на конкретные шаги.</p></div></div>
-          </section></div>
+        <LifeOsHome liveData={liveData} refreshToken={answer} onCommand={processCommand} onOpenSection={setActive} />
       </> : <SectionContent
         active={active}
         currentImage={current.image}
@@ -1286,6 +1448,7 @@ export default function Home() {
         onAddGoal={addGoal}
         onAttachTask={attachToTask}
         onAddContact={addContact}
+        onRefreshContacts={refreshContactsOnly}
         onOpenConnection={openConnectionById}
         onToggleConnection={toggleConnection}
         onRenameConnection={renameConnection}
@@ -1293,6 +1456,8 @@ export default function Home() {
         onSaveDocument={saveDocumentToArchive}
         onOpenDocument={openDocumentFromArchive}
         onCommand={processCommand}
+        onRestoreTask={restoreTaskDirect}
+        onLoadTaskChildren={loadTaskChildren}
         onOpenSection={setActive}
       />}
     </section>
@@ -1323,7 +1488,11 @@ function ResultPreview({ result }: { result: AssistantResponse }) {
             ? formatDateTime(String(row.occurred_at))
             : row.time
               ? [row.date, row.time, row.area].filter(Boolean).map(String).join(" · ")
-              : "";
+              : row.phone
+                ? String(row.phone)
+                : row.email
+                  ? String(row.email)
+                  : String(row.subtitle || "");
       return <div className="resultRow" key={String(row.id || row.url || index)}>
         <span>{String(row.title || row.merchant || row.category || "Запись")}</span>
         <small>{secondary}</small>
@@ -1344,6 +1513,7 @@ function DocumentUploadForm({
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [ownerPerson, setOwnerPerson] = useState<DocumentUploadMetadata["ownerPerson"]>("user");
+  const [ownerName, setOwnerName] = useState("Юлия Катаускайте");
   const [documentType, setDocumentType] = useState("other");
   const [expiryDate, setExpiryDate] = useState("");
   const [tags, setTags] = useState("");
@@ -1369,6 +1539,7 @@ function DocumentUploadForm({
       await onSave(file, {
         title: title.trim(),
         ownerPerson,
+        ownerName: ownerName.trim() || undefined,
         documentType: documentType.trim() || "other",
         expiryDate: expiryDate || undefined,
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean),
@@ -1380,6 +1551,7 @@ function DocumentUploadForm({
       setStatus("Сохранено в приватном архиве.");
       setFile(null);
       setTitle("");
+      setOwnerName(ownerPerson === "user" ? "Юлия Катаускайте" : "");
       setDocumentType("other");
       setExpiryDate("");
       setTags("");
@@ -1407,9 +1579,20 @@ function DocumentUploadForm({
       <small>{file ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} МБ` : "До 50 МБ. Большие файлы загружаются частями напрямую в Supabase."}</small>
     </label>
     <label><span>Название</span><input value={title} onChange={(e) => setTitle(e.target.value)} disabled={disabled || uploading} required /></label>
-    <label><span>Чей документ</span><select value={ownerPerson} onChange={(e) => setOwnerPerson(e.target.value as DocumentUploadMetadata["ownerPerson"])} disabled={disabled || uploading}>
-      <option value="user">Мой</option><option value="child">Ребёнка</option><option value="mother">Мамы</option><option value="work">Рабочий</option><option value="other">Другое</option>
+    <label><span>Категория владельца</span><select value={ownerPerson} onChange={(e) => {
+      const next = e.target.value as DocumentUploadMetadata["ownerPerson"];
+      setOwnerPerson(next);
+      if (next === "user") setOwnerName("Юлия Катаускайте");
+      else if (next === "child") setOwnerName("Матвей");
+      else if (next === "mother") setOwnerName("Катаускене Светлана");
+      else if (next === "work") setOwnerName("Работа");
+      else setOwnerName("");
+    }} disabled={disabled || uploading}>
+      <option value="user">Мой</option><option value="child">Ребёнок</option><option value="mother">Мама</option><option value="work">Работа</option><option value="other">Другой человек</option>
     </select></label>
+    <label><span>Имя владельца</span><input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} list="document-owner-names" placeholder="Матвей, Кайрат, Валя…" disabled={disabled || uploading} required />
+      <datalist id="document-owner-names"><option value="Юлия Катаускайте"/><option value="Матвей"/><option value="Кайрат"/><option value="Валя"/><option value="Катаускас Альгис"/><option value="Катаускене Светлана"/></datalist>
+    </label>
     <label><span>Тип</span><input value={documentType} onChange={(e) => setDocumentType(e.target.value)} placeholder="passport, contract, insurance…" disabled={disabled || uploading} /></label>
     <label><span>Срок действия</span><input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} disabled={disabled || uploading} /></label>
     <label className="documentTags"><span>Теги</span><input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="паспорт, поездки" disabled={disabled || uploading} /></label>
@@ -1473,8 +1656,8 @@ function ConnectionsImportForm({
 function SectionContent({
   active, currentImage, tasks, events, expenses, notes, goals, healthEvents, categories, documents, contacts, connections, liveData, totalText,
   advisorQuestion, advisorAnswer, advisorBusy, onAdvisorQuestion, onSubmitAdvisor,
-  onToggleTask, onMoveTask, onAddSubtask, onSplitTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact,
-  onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand, onOpenSection,
+  onToggleTask, onMoveTask, onAddSubtask, onSplitTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact, onRefreshContacts,
+  onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand, onRestoreTask, onLoadTaskChildren, onOpenSection,
 }: {
   active: SectionId;
   currentImage: GlashaImage;
@@ -1504,6 +1687,7 @@ function SectionContent({
   onAddGoal: () => void;
   onAttachTask: (id: string) => void;
   onAddContact: () => void;
+  onRefreshContacts: () => Promise<void>;
   onOpenConnection: (id: string) => void;
   onToggleConnection: (id: string, enabled: boolean) => void;
   onRenameConnection: (id: string) => void;
@@ -1511,17 +1695,24 @@ function SectionContent({
   onSaveDocument: (file: File, metadata: DocumentUploadMetadata, onProgress?: (percent: number) => void) => Promise<void>;
   onOpenDocument: (id: string) => void;
   onCommand: (text: string, source?: "text" | "voice") => void;
+  onRestoreTask: (id: string) => void;
+  onLoadTaskChildren: (id: string) => Promise<void>;
   onOpenSection: (id: SectionId) => void;
 }) {
   const [calendarFilter, setCalendarFilter] = useState<"all" | "personal" | "work" | "health" | "goals" | "travel">("all");
+  const [achievementFilter, setAchievementFilter] = useState<"all" | "personal" | "work" | "projects">("all");
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(() => new Set());
   const latestCycle = healthEvents.find((item) => item.kind === "cycle_start");
   const achievementWindowMs = 14 * 24 * 60 * 60 * 1000;
   const completedRootTasks = tasks
     .filter((task) => !task.parentTaskId && task.done && task.completedAt)
     .sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
-  const recentAchievements = completedRootTasks.filter((task) => Date.now() - new Date(task.completedAt || 0).getTime() < achievementWindowMs);
-  const archivedAchievements = completedRootTasks.filter((task) => Date.now() - new Date(task.completedAt || 0).getTime() >= achievementWindowMs);
+  const achievementMatches = (task: Task) => achievementFilter === "all"
+    || (achievementFilter === "personal" && task.area === "Личное" && !task.isProject)
+    || (achievementFilter === "work" && task.area === "Работа" && !task.isProject)
+    || (achievementFilter === "projects" && Boolean(task.isProject));
+  const recentAchievements = completedRootTasks.filter((task) => Date.now() - new Date(task.completedAt || 0).getTime() < achievementWindowMs && achievementMatches(task));
+  const archivedAchievements = completedRootTasks.filter((task) => Date.now() - new Date(task.completedAt || 0).getTime() >= achievementWindowMs && achievementMatches(task));
   const categoryTotals = useMemo(() => {
     const totals: Record<string, Record<string, number>> = {};
     for (const expense of expenses) {
@@ -1574,18 +1765,23 @@ function SectionContent({
   }
 
   function toggleExpandedTask(id: string) {
+    const opening = !expandedTasks.has(id);
     setExpandedTasks((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+    const task = tasks.find((item) => item.id === id);
+    if (opening && task && (task.totalSubtasks || 0) > 0 && !tasks.some((item) => item.parentTaskId === id)) {
+      void onLoadTaskChildren(id);
+    }
   }
 
   function renderTaskTree(task: Task, depth = 0): React.ReactNode {
     const children = taskChildren(task.id);
-    const completed = children.filter((child) => child.done).length;
-    const total = children.length;
+    const completed = Math.max(task.completedSubtasks || 0, children.filter((child) => child.done).length);
+    const total = Math.max(task.totalSubtasks || 0, children.length);
     const percent = total ? Math.round((completed / total) * 100) : 0;
     const expanded = expandedTasks.has(task.id);
     const showInArea = active === "tasks" || task.area === "Работа";
@@ -1594,9 +1790,9 @@ function SectionContent({
 
     return <div className={depth ? "taskTree nested" : "taskTree"} key={task.id}>
       <div className={`taskRow taskRowStatic ${task.done ? "done" : ""}`}>
-        <button className={children.length ? "checkButton projectCheck" : "checkButton"} onClick={() => children.length ? toggleExpandedTask(task.id) : onToggleTask(task.id)} title={children.length ? "Открыть подзадачи" : task.done ? "Вернуть в работу" : "Отметить выполненной"}><span className="checkCircle">{task.done ? "✓" : ""}</span></button>
+        <button className={total ? "checkButton projectCheck" : "checkButton"} onClick={() => total ? toggleExpandedTask(task.id) : onToggleTask(task.id)} title={total ? "Открыть подзадачи" : task.done ? "Вернуть в работу" : "Отметить выполненной"}><span className="checkCircle">{task.done ? "✓" : ""}</span></button>
         <span className="taskText">
-          <b>{children.length ? <button type="button" className="taskTitleButton" onClick={() => toggleExpandedTask(task.id)} aria-expanded={expanded}>{task.title}<span className="projectBadge">проект</span><span className="taskExpandMark">{expanded ? "⌄" : "›"}</span></button> : task.title}</b>
+          <b>{total ? <button type="button" className="taskTitleButton" onClick={() => toggleExpandedTask(task.id)} aria-expanded={expanded}>{task.title}<span className="projectBadge">проект</span><span className="taskExpandMark">{expanded ? "⌄" : "›"}</span></button> : task.title}</b>
           <small>{task.area}{task.dueDate ? ` · ${task.dueDate}` : ""}{task.time ? ` · ${task.time}` : ""}{task.priority ? ` · ${task.priority}` : ""}{task.goalTitle ? ` · цель: ${task.goalTitle}` : ""}</small>
           {total > 0 && <span className="projectProgress">
             <span><i style={{ width: `${percent}%` }} /></span>
@@ -1604,29 +1800,37 @@ function SectionContent({
           </span>}
         </span>
         <div className="taskActions">
-          <button className="miniTaskButton" onClick={() => onMoveTask(task.id, task.area === "Работа" ? "Личное" : "Работа")}>→ {task.area === "Работа" ? "Личное" : "Работа"}</button>
+          <button className="miniTaskButton" onClick={() => onMoveTask(task.id, task.area === "Работа" ? "Личное" : "Работа")}>Переместить → {task.area === "Работа" ? "Личное" : "Работа"}</button>
           {!children.length && <button className="miniTaskButton" onClick={() => onSplitTask(task.id)}>Разбить на шаги</button>}
           <button className="miniTaskButton" onClick={() => onAddSubtask(task.id)}>+ Подзадача</button>
           <button className="attachButton" onClick={() => onAttachTask(task.id)} title="Прикрепить документ">📎</button>
         </div>
       </div>
-      {children.length > 0 && expanded && <div className="taskChildren">{children.map((child) => renderTaskTree(child, depth + 1))}</div>}
+      {total > 0 && expanded && <div className="taskChildren">{children.map((child) => renderTaskTree(child, depth + 1))}</div>}
     </div>;
   }
 
   function renderAchievementCard(task: Task, archived = false) {
     const children = taskChildren(task.id);
-    const completed = children.filter((child) => child.done).length;
-    const total = children.length;
+    const completed = Math.max(task.completedSubtasks || 0, children.filter((child) => child.done).length);
+    const total = Math.max(task.totalSubtasks || 0, children.length);
     const percent = total ? Math.round((completed / total) * 100) : 100;
     const expanded = expandedTasks.has(task.id);
+
     return <article className={archived ? "achievementCard archived" : "achievementCard"} key={task.id}>
-      <button type="button" className="achievementSummary" onClick={() => children.length && toggleExpandedTask(task.id)} aria-expanded={children.length ? expanded : undefined}>
-        <span className="achievementMark">✓</span>
-        <span className="achievementCopy"><b>{task.title}</b><small>{task.area}{task.completedAt ? ` · выполнено ${formatDateTime(task.completedAt)}` : ""}</small>{total > 0 && <span className="projectProgress"><span><i style={{ width: `${percent}%` }} /></span><small>{completed} из {total} выполнено · {percent}%</small></span>}</span>
-        {children.length > 0 && <span className="achievementChevron">{expanded ? "⌄" : "›"}</span>}
-      </button>
-      {children.length > 0 && expanded && <div className="achievementChildren">{children.map((child) => <div className="achievementChild" key={child.id}><span>{child.done ? "✓" : "○"}</span><div><b>{child.title}</b><small>{child.done ? "Выполнено" : "Не завершено"}</small></div></div>)}</div>}
+      <div className="achievementSummary">
+        <button type="button" className="achievementOpen" onClick={() => total && toggleExpandedTask(task.id)} aria-expanded={total ? expanded : undefined}>
+          <span className="achievementMark">✓</span>
+          <span className="achievementCopy">
+            <b>{task.title}</b>
+            <small>{task.area} · {task.isProject ? "Проект" : "Задача"}{task.completedAt ? ` · выполнено ${formatDateTime(task.completedAt)}` : ""}</small>
+            {total > 0 && <span className="projectProgress"><span><i style={{ width: `${percent}%` }} /></span><small>{completed} из {total} выполнено · {percent}%</small></span>}
+          </span>
+          {total > 0 && <span className="achievementChevron">{expanded ? "⌄" : "›"}</span>}
+        </button>
+        <button type="button" className="miniTaskButton achievementRestore" onClick={() => onRestoreTask(task.id)}>Вернуть в дела</button>
+      </div>
+      {total > 0 && expanded && <div className="achievementChildren">{children.map((child) => <div className="achievementChild" key={child.id}><span>{child.done ? "✓" : "○"}</span><div><b>{child.title}</b><small>{child.done ? "Выполнено" : "Не завершено"}{child.dueDate ? ` · ${child.dueDate}` : ""}{child.time ? ` · ${child.time}` : ""}</small></div></div>)}</div>}
     </article>;
   }
 
@@ -1645,12 +1849,13 @@ function SectionContent({
     {active === "achievements" && <>
       <section className="panel achievementsPanel">
         <div className="panelHeader"><div><p className="eyebrow">Последние 14 дней</p><h3>Мои достижения</h3></div><span className="achievementCount">{recentAchievements.length}</span></div>
-        <p className="muted achievementIntro">Здесь остаются только завершённые крупные задачи. Подзадачи не создают отдельные карточки — они раскрываются внутри своего результата.</p>
-        <div className="achievementList">{recentAchievements.length ? recentAchievements.map((task) => renderAchievementCard(task)) : <p className="muted">Завершённые крупные задачи появятся здесь автоматически.</p>}</div>
+        <div className="filterRow">{([["all","Все"],["personal","Личное"],["work","Работа"],["projects","Проекты"]] as const).map(([id,label]) => <button key={id} className={achievementFilter === id ? "filterChip active" : "filterChip"} onClick={() => setAchievementFilter(id)}>{label}</button>)}</div>
+        <p className="muted achievementIntro">Подзадачи хранятся внутри выполненного проекта и не создают отдельные карточки достижений.</p>
+        <div className="achievementList">{recentAchievements.length ? recentAchievements.map((task) => renderAchievementCard(task)) : <p className="muted">За выбранный период здесь пока пусто.</p>}</div>
       </section>
       <details className="panel achievementArchive">
-        <summary><span>Архив</span><small>{archivedAchievements.length} задач</small></summary>
-        <div className="achievementList">{archivedAchievements.length ? archivedAchievements.map((task) => renderAchievementCard(task, true)) : <p className="muted">В архиве пока пусто.</p>}</div>
+        <summary><span>Архив старше 14 дней</span><small>{archivedAchievements.length} задач</small></summary>
+        <div className="achievementList">{archivedAchievements.length ? archivedAchievements.map((task) => renderAchievementCard(task, true)) : <p className="muted">В архиве по этому фильтру пока пусто.</p>}</div>
       </details>
     </>}
 
@@ -1712,15 +1917,20 @@ function SectionContent({
       <p className="muted">Файл идёт из браузера прямо в private bucket Supabase. Через Netlify Function бинарные документы не проксируются.</p>
       <DocumentUploadForm disabled={!liveData} onSave={onSaveDocument} />
       <div className="documentArchive">
-        {documents.length ? documents.map(doc => <div className="documentRow" key={doc.id}><div><b>{doc.title}</b><small>{doc.documentType} · {doc.ownerPerson}{doc.expiryDate ? ` · действует до ${doc.expiryDate}` : ""}</small></div><button className="linkButton" onClick={() => onOpenDocument(doc.id)}>Открыть</button></div>) : <p className="muted">Документов пока нет.</p>}
+        {documents.length ? documents.map(doc => <div className="documentRow" key={doc.id}><div><b>{doc.title}</b><small>{doc.ownerName || doc.ownerPerson} · {doc.documentType}{doc.expiryDate ? ` · действует до ${doc.expiryDate}` : ""}</small></div><button className="linkButton" onClick={() => onOpenDocument(doc.id)}>Открыть</button></div>) : <p className="muted">Документов пока нет.</p>}
       </div>
       <div className="promptStack"><button onClick={() => onCommand("Глаша, найди мой паспорт")}>Найди мой паспорт</button></div>
     </section>}
 
     {active === "contacts" && <section className="panel">
-      <div className="panelHeader"><div><p className="eyebrow">Контакты</p><h3>Люди, которым можно позвонить или написать</h3></div><button className="primaryButton" onClick={onAddContact}>+ Контакт</button></div>
-      {contacts.length ? contacts.map(contact => <div className="contactRow" key={contact.id}><div><b>{contact.name}</b><small>{contact.relation || "контакт"}{contact.phone ? ` · ${contact.phone}` : ""}{contact.telegramUsername ? ` · @${contact.telegramUsername}` : ""}</small></div><div className="rowActions">{contact.phone && <a className="linkButton" href={`tel:${contact.phone}`}>Позвонить</a>}{contact.telegramUsername && <a className="linkButton" href={`https://t.me/${contact.telegramUsername.replace(/^@/, "")}`} target="_blank" rel="noreferrer">Telegram</a>}</div></div>) : <p className="muted">Добавь первый контакт, например Кайрата.</p>}
-      <div className="promptStack"><button onClick={() => onCommand("Позвони Кайрату")}>Позвони Кайрату</button><button onClick={() => onCommand("Напиши Кайрату в Telegram")}>Напиши Кайрату в Telegram</button></div>
+      <div className="panelHeader"><div><p className="eyebrow">Контакты</p><h3>Телефонная книга Глаши</h3></div><button className="primaryButton" onClick={onAddContact}>+ Контакт</button></div>
+      <p className="muted">VCF разбирается прямо в браузере. Сырой файл телефонной книги не сохраняется и не отправляется в OpenAI.</p>
+      <PhonebookImport liveData={liveData} onImported={onRefreshContacts} />
+      {contacts.length ? contacts.map(contact => {
+        const phones = contact.phoneNumbers.length ? contact.phoneNumbers : (contact.phone ? [{ label: "основной", value: contact.phone, normalized: contact.phone }] : []);
+        return <div className="contactRow" key={contact.id}><div><b>{contact.name}</b><small>{contact.relation || contact.source || "контакт"}{phones.length ? ` · ${phones.length} тел.` : ""}{contact.aliases.length ? ` · ${contact.aliases.join(", ")}` : ""}{contact.telegramUsername ? ` · @${contact.telegramUsername}` : ""}</small></div><div className="rowActions">{phones.length === 1 && <a className="linkButton" href={`tel:${phones[0].normalized || phones[0].value}`}>Позвонить</a>}{phones.length > 1 && <button className="linkButton" onClick={() => onCommand(`Покажи номер ${contact.name}`)}>Номера</button>}{contact.telegramUsername && <a className="linkButton" href={`https://t.me/${contact.telegramUsername.replace(/^@/, "")}`} target="_blank" rel="noreferrer">Telegram</a>}{contact.email && <a className="linkButton" href={`mailto:${contact.email}`}>Email</a>}</div></div>;
+      }) : <p className="muted">Добавь контакт вручную или импортируй телефонную книгу .vcf.</p>}
+      <div className="promptStack"><button onClick={() => onCommand("Набери Кайрата")}>Набери Кайрата</button><button onClick={() => onCommand("Напиши Кайрату в Telegram")}>Напиши Кайрату в Telegram</button></div>
     </section>}
 
     {active === "connections" && <section className="panel">
@@ -1751,8 +1961,8 @@ function headline(id: SectionId) {
   return ({
     tasks: "Ничего не держим в голове",
     work: "Помню, где мы остановились",
-    achievements: "Готовое тоже должно быть видно",
     calendar: "Все даты в одном месте",
+    achievements: "Готовое тоже должно быть видно",
     finance: "Деньги без тумана",
     health: "Забота о себе тоже дело",
     goals: "Мечты превращаем в шаги",
@@ -1772,8 +1982,8 @@ function description(id: SectionId) {
   return ({
     tasks: "Личные и рабочие дела можно смотреть вместе или отдельно.",
     work: "Задачи, дедлайны и документы к ним — в одном рабочем контексте.",
-    achievements: "Завершённые крупные задачи хранятся здесь 14 дней, затем автоматически отображаются в архиве.",
     calendar: "Напоминания, встречи, дни рождения, здоровье и поездки.",
+    achievements: "Завершённые крупные задачи видны 14 дней, затем остаются в архиве для истории.",
     finance: "Говори сумму и назначение — Глаша распределит расход по категории.",
     health: "Самочувствие, цикл, врачи, лекарства и заметки.",
     goals: "Мечта может остаться мечтой или превратиться в цель с датой и шагами.",

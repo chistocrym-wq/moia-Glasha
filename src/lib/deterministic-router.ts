@@ -2,7 +2,7 @@ export type DeterministicRoute =
   | { kind: "open_service"; service: string }
   | { kind: "query_schedule"; range: "today" | "tomorrow" }
   | { kind: "find_document"; query: string }
-  | { kind: "contact_action"; contactName: string; method: "call" | "telegram" | "email"; messageText?: string }
+  | { kind: "contact_action"; contactName: string; method: "call" | "telegram" | "email" | "show_phone"; messageText?: string }
   | { kind: "create_expense"; amount: number; note: string; categorySlug: string | null }
   | { kind: "query_expenses"; categorySlug: string | null; monthToken: string | null }
   | { kind: "create_task"; title: string; area: "personal" | "work"; dateToken: string; time: string | null }
@@ -12,7 +12,13 @@ export type DeterministicRoute =
   | { kind: "check_availability"; dateToken: string; time: string; durationMinutes: number }
   | { kind: "search_tickets"; from: string; to: string; dateToken: string; afterTime: string | null }
   | { kind: "move_task"; taskQuery: string | null; area: "personal" | "work" }
+  | { kind: "complete_task"; taskQuery: string }
+  | { kind: "restore_task"; taskQuery: string }
+  | { kind: "query_achievements" }
   | { kind: "split_task"; taskQuery: string }
+  | { kind: "create_reminder"; title: string; dateToken: string; time: string; recurrence: "none" | "daily" | "weekly" | "monthly" }
+  | { kind: "query_overdue" }
+  | { kind: "global_search"; query: string }
   | { kind: "advice"; goalTitle: string | null; explicitDeep: boolean };
 
 const CATEGORY_HINTS: Array<[RegExp, string]> = [
@@ -122,6 +128,28 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
   const value = lower(text);
   if (!text) return null;
 
+  if (/^(?:глаша[,.]?\s*)?(?:покажи\s+мои\s+достижения|покажи\s+достижения|что\s+я\s+сделал[аи]?\s+за\s+последн(?:ие|их)\s+14\s+дн(?:ей|я))$/i.test(text)) {
+    return { kind: "query_achievements" };
+  }
+
+  const completeTask = text.match(/^(?:глаша[,.]?\s*)?(?:отметь|пометь)\s+(?:задачу\s+)?[«"]?(.+?)[»"]?\s+(?:как\s+)?выполненн(?:ой|ую)|^(?:глаша[,.]?\s*)?(?:заверши|выполни)\s+(?:задачу\s+)?[«"]?(.+?)[»"]?$/i);
+  if (completeTask) {
+    const taskQuery = tidy((completeTask[1] || completeTask[2] || "").replace(/^["«]|["»]$/g, ""));
+    if (taskQuery) return { kind: "complete_task", taskQuery };
+  }
+
+  const restoreTask = text.match(/^(?:глаша[,.]?\s*)?(?:верни|возврати)\s+(?:задачу\s+)?[«"]?(.+?)[»"]?\s+(?:обратно\s+)?(?:в\s+)?дела$/i);
+  if (restoreTask) {
+    const taskQuery = tidy(restoreTask[1].replace(/^["«]|["»]$/g, ""));
+    if (taskQuery) return { kind: "restore_task", taskQuery };
+  }
+
+  const openContact = text.match(/^(?:глаша[,.]?\s*)?открой\s+контакт\s+(.+)$/i);
+  if (openContact) {
+    const contactName = tidy(openContact[1]);
+    if (contactName) return { kind: "contact_action", contactName, method: "show_phone" };
+  }
+
   if (/^(?:глаша[,.]?\s*)?(?:открой|открыть)(?:\s|$)/i.test(text)) {
     const requested = tidy(text.replace(/^(?:глаша[,.]?\s*)?(?:открой|открыть)\s*/i, ""));
     const service = serviceFromText(requested) || requested;
@@ -165,8 +193,14 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
     return { kind: "find_document", query: query || "документ" };
   }
 
-  if (/^позвони\s+/i.test(text) && !hasFutureCue(text)) {
-    const contactName = tidy(text.replace(/^позвони\s+/i, "").replace(/\s+сейчас$/i, ""));
+  const showPhone = text.match(/^(?:глаша[,.]?\s*)?покажи\s+(?:номер|телефон)\s+(.+)$/i);
+  if (showPhone) {
+    const contactName = tidy(showPhone[1]);
+    if (contactName) return { kind: "contact_action", contactName, method: "show_phone" };
+  }
+
+  if (/^(?:позвони|набери)\s+/i.test(text) && !hasFutureCue(text)) {
+    const contactName = tidy(text.replace(/^(?:позвони|набери)\s+/i, "").replace(/\s+сейчас$/i, ""));
     if (contactName) return { kind: "contact_action", contactName, method: "call" };
   }
 
@@ -188,6 +222,30 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
       method: "email",
       messageText: email[2] ? tidy(email[2]) : undefined,
     };
+  }
+
+  if (/^(?:глаша[,.]?\s*)?покажи\s+просроченн(?:ые|ое|ую|ый)(?:\s+задачи)?$/i.test(text)) {
+    return { kind: "query_overdue" };
+  }
+
+  if (/^(?:глаша[,.]?\s*)?(?:напомни|напоминай)(?:\s|$)/i.test(text)) {
+    const recurrence =
+      /кажд(?:ый|ую)\s+день|ежеднев/i.test(text) ? "daily" :
+      /кажд(?:ую|ой)\s+недел|еженедел/i.test(text) ? "weekly" :
+      /кажд(?:ый|ую)\s+месяц|ежемесяч/i.test(text) ? "monthly" :
+      "none";
+    const reminderDate = dateToken(text) || (recurrence !== "none" ? "today" : null);
+    const reminderTime = timeToken(text);
+    if (reminderDate && reminderTime) {
+      const title = tidy(text
+        .replace(/^(?:глаша[,.]?\s*)?(?:напомни|напоминай)\s*/i, "")
+        .replace(/(?:^|\s)(?:сегодня|завтра)(?=\s|$)/ig, " ")
+        .replace(/(?:^|\s)(?:в\s+)?(?:понедельник|понедельника|вторник|вторника|среду|среда|четверг|четверга|пятницу|пятница|субботу|суббота|воскресенье)(?=\s|$)/ig, " ")
+        .replace(/кажд(?:ый|ую|ой)\s+(?:день|недел\w*|месяц)|ежеднев\w*|еженедел\w*|ежемесяч\w*/ig, " ")
+        .replace(/(?:^|\s)в\s+([01]?\d|2[0-3])(?::[0-5]\d)?(?=\s|$|[,.!?])/ig, " ")
+        .replace(/\s+/g, " "));
+      if (title) return { kind: "create_reminder", title, dateToken: reminderDate, time: reminderTime, recurrence };
+    }
   }
 
   const expense = text.match(/(?:потратил[аи]?|заплатил[аи]?|расход(?:ы)?)[^\d]{0,24}(\d+(?:[.,]\d{1,2})?)\s*(?:₽|р\.?|руб(?:ль|ля|лей)?\.?)?(?:\s+на)?\s+(.+)/i);
@@ -262,6 +320,11 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
         return { kind: "search_tickets", from, to: rest, dateToken: travelDate, afterTime };
       }
     }
+  }
+
+  if (/^(?:глаша[,.]?\s*)?(?:найди|поиск)\s+/i.test(text)) {
+    const query = tidy(text.replace(/^(?:глаша[,.]?\s*)?(?:найди|поиск)\s+/i, ""));
+    if (query) return { kind: "global_search", query };
   }
 
   if (hasAny(text, ["разбери мою неделю", "стратег", "план подготовки", "что мне сделать для моей цели"])) {

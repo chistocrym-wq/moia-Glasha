@@ -6,15 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types tests/deterministic-router.test.mts",
+    "test": "node --experimental-strip-types tests/deterministic-router.test.mts && node --experimental-strip-types tests/life-os.test.mts && node --experimental-strip-types tests/voice-output.test.mts && node --experimental-strip-types tests/contacts.test.mts && node --experimental-strip-types tests/phase1-architecture.test.mts",
     "start": "next start"
   },
   "dependencies": {
     "next": "16.3.3",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "@supabase/ssr": "^0.7.0",
-    "@supabase/supabase-js": "^2.57.0",
+    "@supabase/ssr": "0.7.0",
+    "@supabase/supabase-js": "2.117.0",
     "openai": "^6.16.0",
     "tus-js-client": "^4.3.1"
   },

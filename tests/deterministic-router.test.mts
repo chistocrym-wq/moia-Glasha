@@ -17,6 +17,16 @@ const cases = [
   ["Это личное, а не рабочее", "move_task"],
   ["Разбей задачу Подготовить презентацию на этапы", "split_task"],
   ["Открой Мой супербанк", "open_service"],
+  ["Напомни завтра в 10 оплатить интернет", "create_reminder"],
+  ["Покажи просроченные", "query_overdue"],
+  ["Найди проект Переезд", "global_search"],
+  ["Отметь задачу Подать документы выполненной", "complete_task"],
+  ["Верни задачу Подать документы в дела", "restore_task"],
+  ["Покажи мои достижения", "query_achievements"],
+  ["Что я сделала за последние 14 дней?", "query_achievements"],
+  ["Набери Кайрата", "contact_action"],
+  ["Покажи номер Кайрата", "contact_action"],
+  ["Открой контакт бухгалтер", "contact_action"],
 ] as const;
 
 for (const [text, expected] of cases) {
@@ -62,3 +72,42 @@ assert.equal(split?.kind, "split_task");
 const arbitraryApp = deterministicRoute("Открой Мой супербанк");
 assert.equal(arbitraryApp?.kind, "open_service");
 if (arbitraryApp?.kind === "open_service") assert.equal(arbitraryApp.service, "Мой супербанк");
+
+
+const reminder = deterministicRoute("Напомни завтра в 10 оплатить интернет");
+assert.equal(reminder?.kind, "create_reminder");
+if (reminder?.kind === "create_reminder") {
+  assert.equal(reminder.dateToken, "tomorrow");
+  assert.equal(reminder.time, "10:00");
+  assert.equal(reminder.title.toLocaleLowerCase("ru-RU"), "оплатить интернет");
+  assert.equal(reminder.recurrence, "none");
+}
+
+const recurring = deterministicRoute("Напоминай каждый день в 09:00 пить витамины");
+assert.equal(recurring?.kind, "create_reminder");
+if (recurring?.kind === "create_reminder") assert.equal(recurring.recurrence, "daily");
+
+
+const completed = deterministicRoute("Отметь задачу Подать документы выполненной");
+assert.equal(completed?.kind, "complete_task");
+if (completed?.kind === "complete_task") assert.equal(completed.taskQuery, "Подать документы");
+
+const restored = deterministicRoute("Верни задачу Подать документы в дела");
+assert.equal(restored?.kind, "restore_task");
+if (restored?.kind === "restore_task") assert.equal(restored.taskQuery, "Подать документы");
+
+
+const dialContact = deterministicRoute("Набери Кайрата");
+assert.equal(dialContact?.kind, "contact_action");
+if (dialContact?.kind === "contact_action") {
+  assert.equal(dialContact.method, "call");
+  assert.equal(dialContact.contactName, "Кайрата");
+}
+
+const showContact = deterministicRoute("Покажи номер Кайрата");
+assert.equal(showContact?.kind, "contact_action");
+if (showContact?.kind === "contact_action") assert.equal(showContact.method, "show_phone");
+
+const openContact = deterministicRoute("Открой контакт бухгалтер");
+assert.equal(openContact?.kind, "contact_action");
+if (openContact?.kind === "contact_action") assert.equal(openContact.method, "show_phone");
