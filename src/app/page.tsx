@@ -41,6 +41,8 @@ type Task = {
   parentTaskId?: string;
   isProject?: boolean;
   completedAt?: string;
+  completedSubtasks?: number;
+  totalSubtasks?: number;
 };
 
 type Expense = {
@@ -342,11 +344,10 @@ export default function Home() {
     if (!supabase || !userId) return;
 
     const [
-      taskRes, taskGoalRes, eventRes, eventAreaRes, expenseRes, noteRes, goalRes, healthRes,
+      taskRes, eventRes, eventAreaRes, expenseRes, noteRes, goalRes, healthRes,
       categoryRes, profileRes, documentRes, contactRes, connectionRes
     ] = await Promise.all([
-      supabase.from("tasks").select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at").eq("user_id", userId).order("due_date", { ascending: true }),
-      supabase.from("tasks").select("id,goal_id,goals(title)").eq("user_id", userId),
+      supabase.rpc("glasha_list_root_tasks"),
       supabase.from("calendar_events").select("id,title,start_at,kind").eq("user_id", userId).order("start_at", { ascending: true }).limit(100),
       supabase.from("calendar_events").select("id,area,end_at").eq("user_id", userId).limit(100),
       supabase.from("expenses").select("id,amount,currency,occurred_at,merchant,note,expense_categories(name,slug)").eq("user_id", userId).order("occurred_at", { ascending: false }).limit(300),
@@ -366,26 +367,23 @@ export default function Home() {
       return;
     }
 
-    setTasks((taskRes.data ?? []).map((row) => {
-      const extra = taskGoalRes.error ? null : (taskGoalRes.data ?? []).find((item) => item.id === row.id);
-      const relation = extra?.goals as unknown;
-      const goal = Array.isArray(relation) ? relation[0] : relation as { title?: string } | null;
-      return {
-        id: row.id,
-        title: row.title,
-        area: row.area === "work" ? "Работа" : "Личное",
-        done: row.status === "done",
-        dueDate: row.due_date || undefined,
-        time: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
-        reminderAt: row.reminder_at || undefined,
-        priority: row.priority || undefined,
-        goalId: row.goal_id || extra?.goal_id || undefined,
-        goalTitle: goal?.title || undefined,
-        parentTaskId: row.parent_task_id || undefined,
-        isProject: Boolean(row.is_project),
-        completedAt: row.completed_at || undefined,
-      };
-    }));
+    setTasks((taskRes.data ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      area: row.area === "work" ? "Работа" : "Личное",
+      done: row.status === "done",
+      dueDate: row.due_date || undefined,
+      time: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
+      reminderAt: row.reminder_at || undefined,
+      priority: row.priority || undefined,
+      goalId: row.goal_id || undefined,
+      goalTitle: row.goal_title || undefined,
+      parentTaskId: row.parent_task_id || undefined,
+      isProject: Boolean(row.is_project),
+      completedAt: row.completed_at || undefined,
+      completedSubtasks: Number(row.completed_subtasks || 0),
+      totalSubtasks: Number(row.total_subtasks || 0),
+    })));
 
     setEvents((eventRes.data ?? []).map((row) => {
       const extra = eventAreaRes.error ? null : (eventAreaRes.data ?? []).find((item) => item.id === row.id);
@@ -472,22 +470,52 @@ export default function Home() {
       aliases: row.aliases ?? [],
     })));
 
-    if (taskGoalRes.error || eventAreaRes.error || documentRes.error || contactRes.error || connectionRes.error) {
+    if (eventAreaRes.error || documentRes.error || contactRes.error || connectionRes.error) {
       setAnswer("Основная база подключена. Для новых функций Daily Core нужно применить migration 002.");
     }
   }
 
   async function refreshTasksOnly() {
     if (!supabase || !userId) return;
-    const { data, error } = await supabase.from("tasks")
-      .select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at,goals(title)")
-      .eq("user_id", userId)
-      .order("due_date", { ascending: true });
+    const { data, error } = await supabase.rpc("glasha_list_root_tasks");
     if (error) {
       console.error("refresh_tasks_failed", error);
       return;
     }
-    setTasks((data ?? []).map((row) => {
+    setTasks((data ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      area: row.area === "work" ? "Работа" : "Личное",
+      done: row.status === "done",
+      dueDate: row.due_date || undefined,
+      time: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
+      reminderAt: row.reminder_at || undefined,
+      priority: row.priority || undefined,
+      goalId: row.goal_id || undefined,
+      goalTitle: row.goal_title || undefined,
+      parentTaskId: row.parent_task_id || undefined,
+      isProject: Boolean(row.is_project),
+      completedAt: row.completed_at || undefined,
+      completedSubtasks: Number(row.completed_subtasks || 0),
+      totalSubtasks: Number(row.total_subtasks || 0),
+    })));
+  }
+
+  async function loadTaskChildren(parentId: string) {
+    if (!supabase || !userId) return;
+    const { data, error } = await supabase.from("tasks")
+      .select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at,goals(title)")
+      .eq("user_id", userId)
+      .eq("parent_task_id", parentId)
+      .neq("status", "cancelled")
+      .order("sort_order")
+      .order("created_at");
+    if (error) {
+      console.error("load_task_children_failed", error);
+      setAnswer("Не получилось загрузить подзадачи.");
+      return;
+    }
+    const children: Task[] = (data ?? []).map((row) => {
       const relation = row.goals as unknown;
       const goal = Array.isArray(relation) ? relation[0] : relation as { title?: string } | null;
       return {
@@ -505,7 +533,8 @@ export default function Home() {
         isProject: Boolean(row.is_project),
         completedAt: row.completed_at || undefined,
       };
-    }));
+    });
+    setTasks((items) => [...items.filter((item) => item.parentTaskId !== parentId), ...children]);
   }
 
   async function refreshEventsAndHealth() {
@@ -1344,6 +1373,7 @@ export default function Home() {
         onOpenDocument={openDocumentFromArchive}
         onCommand={processCommand}
         onRestoreTask={restoreTaskDirect}
+        onLoadTaskChildren={loadTaskChildren}
         onOpenSection={setActive}
       />}
     </section>
@@ -1525,7 +1555,7 @@ function SectionContent({
   active, currentImage, tasks, events, expenses, notes, goals, healthEvents, categories, documents, contacts, connections, liveData, totalText,
   advisorQuestion, advisorAnswer, advisorBusy, onAdvisorQuestion, onSubmitAdvisor,
   onToggleTask, onMoveTask, onAddSubtask, onSplitTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact,
-  onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand, onRestoreTask, onOpenSection,
+  onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand, onRestoreTask, onLoadTaskChildren, onOpenSection,
 }: {
   active: SectionId;
   currentImage: GlashaImage;
@@ -1563,6 +1593,7 @@ function SectionContent({
   onOpenDocument: (id: string) => void;
   onCommand: (text: string, source?: "text" | "voice") => void;
   onRestoreTask: (id: string) => void;
+  onLoadTaskChildren: (id: string) => Promise<void>;
   onOpenSection: (id: SectionId) => void;
 }) {
   const [calendarFilter, setCalendarFilter] = useState<"all" | "personal" | "work" | "health" | "goals" | "travel">("all");
@@ -1631,18 +1662,23 @@ function SectionContent({
   }
 
   function toggleExpandedTask(id: string) {
+    const opening = !expandedTasks.has(id);
     setExpandedTasks((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+    const task = tasks.find((item) => item.id === id);
+    if (opening && task && (task.totalSubtasks || 0) > 0 && !tasks.some((item) => item.parentTaskId === id)) {
+      void onLoadTaskChildren(id);
+    }
   }
 
   function renderTaskTree(task: Task, depth = 0): React.ReactNode {
     const children = taskChildren(task.id);
-    const completed = children.filter((child) => child.done).length;
-    const total = children.length;
+    const completed = Math.max(task.completedSubtasks || 0, children.filter((child) => child.done).length);
+    const total = Math.max(task.totalSubtasks || 0, children.length);
     const percent = total ? Math.round((completed / total) * 100) : 0;
     const expanded = expandedTasks.has(task.id);
     const showInArea = active === "tasks" || task.area === "Работа";
@@ -1651,9 +1687,9 @@ function SectionContent({
 
     return <div className={depth ? "taskTree nested" : "taskTree"} key={task.id}>
       <div className={`taskRow taskRowStatic ${task.done ? "done" : ""}`}>
-        <button className={children.length ? "checkButton projectCheck" : "checkButton"} onClick={() => children.length ? toggleExpandedTask(task.id) : onToggleTask(task.id)} title={children.length ? "Открыть подзадачи" : task.done ? "Вернуть в работу" : "Отметить выполненной"}><span className="checkCircle">{task.done ? "✓" : ""}</span></button>
+        <button className={total ? "checkButton projectCheck" : "checkButton"} onClick={() => total ? toggleExpandedTask(task.id) : onToggleTask(task.id)} title={total ? "Открыть подзадачи" : task.done ? "Вернуть в работу" : "Отметить выполненной"}><span className="checkCircle">{task.done ? "✓" : ""}</span></button>
         <span className="taskText">
-          <b>{children.length ? <button type="button" className="taskTitleButton" onClick={() => toggleExpandedTask(task.id)} aria-expanded={expanded}>{task.title}<span className="projectBadge">проект</span><span className="taskExpandMark">{expanded ? "⌄" : "›"}</span></button> : task.title}</b>
+          <b>{total ? <button type="button" className="taskTitleButton" onClick={() => toggleExpandedTask(task.id)} aria-expanded={expanded}>{task.title}<span className="projectBadge">проект</span><span className="taskExpandMark">{expanded ? "⌄" : "›"}</span></button> : task.title}</b>
           <small>{task.area}{task.dueDate ? ` · ${task.dueDate}` : ""}{task.time ? ` · ${task.time}` : ""}{task.priority ? ` · ${task.priority}` : ""}{task.goalTitle ? ` · цель: ${task.goalTitle}` : ""}</small>
           {total > 0 && <span className="projectProgress">
             <span><i style={{ width: `${percent}%` }} /></span>
@@ -1667,31 +1703,31 @@ function SectionContent({
           <button className="attachButton" onClick={() => onAttachTask(task.id)} title="Прикрепить документ">📎</button>
         </div>
       </div>
-      {children.length > 0 && expanded && <div className="taskChildren">{children.map((child) => renderTaskTree(child, depth + 1))}</div>}
+      {total > 0 && expanded && <div className="taskChildren">{children.map((child) => renderTaskTree(child, depth + 1))}</div>}
     </div>;
   }
 
   function renderAchievementCard(task: Task, archived = false) {
     const children = taskChildren(task.id);
-    const completed = children.filter((child) => child.done).length;
-    const total = children.length;
+    const completed = Math.max(task.completedSubtasks || 0, children.filter((child) => child.done).length);
+    const total = Math.max(task.totalSubtasks || 0, children.length);
     const percent = total ? Math.round((completed / total) * 100) : 100;
     const expanded = expandedTasks.has(task.id);
 
     return <article className={archived ? "achievementCard archived" : "achievementCard"} key={task.id}>
       <div className="achievementSummary">
-        <button type="button" className="achievementOpen" onClick={() => children.length && toggleExpandedTask(task.id)} aria-expanded={children.length ? expanded : undefined}>
+        <button type="button" className="achievementOpen" onClick={() => total && toggleExpandedTask(task.id)} aria-expanded={total ? expanded : undefined}>
           <span className="achievementMark">✓</span>
           <span className="achievementCopy">
             <b>{task.title}</b>
             <small>{task.area} · {task.isProject ? "Проект" : "Задача"}{task.completedAt ? ` · выполнено ${formatDateTime(task.completedAt)}` : ""}</small>
             {total > 0 && <span className="projectProgress"><span><i style={{ width: `${percent}%` }} /></span><small>{completed} из {total} выполнено · {percent}%</small></span>}
           </span>
-          {children.length > 0 && <span className="achievementChevron">{expanded ? "⌄" : "›"}</span>}
+          {total > 0 && <span className="achievementChevron">{expanded ? "⌄" : "›"}</span>}
         </button>
         <button type="button" className="miniTaskButton achievementRestore" onClick={() => onRestoreTask(task.id)}>Вернуть в дела</button>
       </div>
-      {children.length > 0 && expanded && <div className="achievementChildren">{children.map((child) => <div className="achievementChild" key={child.id}><span>{child.done ? "✓" : "○"}</span><div><b>{child.title}</b><small>{child.done ? "Выполнено" : "Не завершено"}{child.dueDate ? ` · ${child.dueDate}` : ""}{child.time ? ` · ${child.time}` : ""}</small></div></div>)}</div>}
+      {total > 0 && expanded && <div className="achievementChildren">{children.map((child) => <div className="achievementChild" key={child.id}><span>{child.done ? "✓" : "○"}</span><div><b>{child.title}</b><small>{child.done ? "Выполнено" : "Не завершено"}{child.dueDate ? ` · ${child.dueDate}` : ""}{child.time ? ` · ${child.time}` : ""}</small></div></div>)}</div>}
     </article>;
   }
 
