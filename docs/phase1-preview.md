@@ -2,9 +2,22 @@
 
 This branch is preview-only.
 
-- Source branch: `feature/glasha-life-os`
-- Production branch must not be changed before Controller live E2E.
-- Netlify deploy-preview is intentionally isolated from the production Supabase project.
-- Apply `supabase/migrations/006_life_os_phase1.sql` only to the preview/test database first.
-- Run `supabase/tests/phase1_acceptance.sql` against preview/test before Controller UI E2E.
-- After Controller PASS, promotion to production remains a separate explicit action.
+- Source branch: `feature/glasha-life-os`.
+- Production branch and production Supabase must not be changed before Controller live E2E.
+- Draft PR: #4.
+- Netlify deploy-preview must use a separate preview/test Supabase project before live E2E.
+- Apply migrations in order on preview/test: `006_life_os_phase1.sql`, `007_phase1_projects_achievements.sql`, `008_phase1_phonebook_contacts.sql`.
+- Run rollback-only DB suites `supabase/tests/phase1_acceptance.sql` and `supabase/tests/phase1_phonebook_acceptance.sql`.
+- Controller then checks UI/E2E in the deploy preview.
+- Only after explicit Controller PASS can promotion to production be a separate action.
+
+## Isolation blocker
+
+Supabase database branching is unavailable on the current Free plan. Do not point a Phase 1 live E2E at production just to bypass this. A separate preview/test Supabase project is the safe fallback.
+
+## Privacy gates
+
+- VCF is parsed in the browser; raw phonebook files are never stored or sent to AI.
+- Contacts are protected by Supabase RLS and are not cached by the service worker.
+- Known contact commands are deterministic/Supabase-only.
+- Browser speech synthesis is opt-in and blocks sensitive text such as credentials, payment/card data, passport data and full phone numbers.
