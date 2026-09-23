@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { nextOccurrence, notificationBucket, localTimeFallsInQuietHours, type Recurrence } from "@/lib/life-os";
+import { nextOccurrence, localTimeFallsInQuietHours, type Recurrence } from "@/lib/life-os";
 
 export type LifeDb = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -115,8 +115,8 @@ function adjustForQuietHours(iso: string, profile: LifeProfile) {
   return zonedDateTimeToUtc(targetDate, end, profile.timezone).toISOString();
 }
 
-export async function materializeNotifications(db: LifeDb, userId: string) {
-  const profile = await getProfile(db, userId);
+export async function materializeNotifications(db: LifeDb, userId: string, knownProfile?: LifeProfile) {
+  const profile = knownProfile || await getProfile(db, userId);
   const { data: reminders, error } = await db
     .from("reminders")
     .select("id,title,priority,next_occurrence_at")
@@ -144,7 +144,8 @@ export async function materializeNotifications(db: LifeDb, userId: string) {
 }
 
 export async function listNotifications(db: LifeDb, userId: string) {
-  await materializeNotifications(db, userId);
+  const profile = await getProfile(db, userId);
+  await materializeNotifications(db, userId, profile);
   const { data, error } = await db
     .from("notifications")
     .select("id,reminder_id,title,scheduled_for,deliver_at,priority,state,resolution,snoozed_until,reminders(category,recurrence,linked_entity_type,linked_entity_id)")
@@ -154,9 +155,15 @@ export async function listNotifications(db: LifeDb, userId: string) {
     .limit(100);
   if (error) throw error;
 
+  const today = localParts(new Date().toISOString(), profile.timezone).date;
+  const nowMs = Date.now();
   return (data ?? []).map((item) => ({
     ...item,
-    bucket: notificationBucket(item.deliver_at),
+    bucket: new Date(item.deliver_at).getTime() <= nowMs
+      ? "urgent"
+      : localParts(item.deliver_at, profile.timezone).date === today
+        ? "today"
+        : "later",
   }));
 }
 
@@ -328,7 +335,7 @@ export async function getNow(db: LifeDb, userId: string) {
   const today = localDate(profile.timezone);
   const nowIso = new Date().toISOString();
 
-  await materializeNotifications(db, userId);
+  await materializeNotifications(db, userId, profile);
 
   const [taskRes, eventRes, notificationRes] = await Promise.all([
     db.from("tasks")
