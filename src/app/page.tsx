@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AssistantAvatar, GlashaCharacter, type GlashaImage } from "@/components/GlashaCharacter";
 import { InstallGlashaTile } from "@/components/PwaClient";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { deterministicRoute } from "@/lib/deterministic-router";
 import {
   askAdvisor,
   getSystemStatus,
@@ -31,9 +32,12 @@ type Task = {
   done: boolean;
   time?: string;
   dueDate?: string;
+  reminderAt?: string;
   priority?: string;
   goalId?: string;
   goalTitle?: string;
+  parentTaskId?: string;
+  isProject?: boolean;
 };
 
 type Expense = {
@@ -53,7 +57,21 @@ type HealthEvent = { id: string; kind: string; occurredAt: string; title?: strin
 type ExpenseCategory = { id: string; name: string; slug: string };
 type DocumentItem = { id: string; title: string; ownerPerson: string; documentType: string; expiryDate?: string; tags: string[]; mimeType?: string; sizeBytes?: number };
 type ContactItem = { id: string; name: string; relation?: string; phone?: string; email?: string; telegramUsername?: string };
-type ConnectionItem = { id: string; service: string; displayName: string; openUrl?: string; deepLink?: string; capability: "OPEN_ONLY" | "READ" | "ACTION" | "NOT_CONNECTED" };
+type ConnectionItem = {
+  id: string;
+  service: string;
+  displayName: string;
+  platform: string;
+  openUrl?: string;
+  deepLink?: string;
+  urlScheme?: string;
+  universalLink?: string;
+  webFallbackUrl?: string;
+  capability: "OPEN_ONLY" | "READ" | "ACTION" | "NOT_CONNECTED";
+  enabled: boolean;
+  icon?: string;
+  aliases: string[];
+};
 
 const sections: Array<{ id: SectionId; label: string; icon: string; subtitle: string; image: GlashaImage }> = [
   { id: "home", label: "Главная", icon: "⌂", subtitle: "Всё важное сейчас", image: "home" },
@@ -211,7 +229,7 @@ export default function Home() {
       taskRes, taskGoalRes, eventRes, eventAreaRes, expenseRes, noteRes, goalRes, healthRes,
       categoryRes, profileRes, documentRes, contactRes, connectionRes
     ] = await Promise.all([
-      supabase.from("tasks").select("id,title,area,status,due_date,due_time,priority").eq("user_id", userId).order("due_date", { ascending: true }),
+      supabase.from("tasks").select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project").eq("user_id", userId).order("due_date", { ascending: true }),
       supabase.from("tasks").select("id,goal_id,goals(title)").eq("user_id", userId),
       supabase.from("calendar_events").select("id,title,start_at,kind").eq("user_id", userId).order("start_at", { ascending: true }).limit(100),
       supabase.from("calendar_events").select("id,area,end_at").eq("user_id", userId).limit(100),
@@ -223,7 +241,7 @@ export default function Home() {
       supabase.from("profiles").select("default_currency").eq("id", userId).maybeSingle(),
       supabase.from("documents").select("id,title,owner_person,document_type,expiry_date,tags,mime_type,size_bytes").eq("user_id", userId).order("created_at", { ascending: false }).limit(100),
       supabase.from("contacts").select("id,name,relation,phone,email,telegram_username").eq("user_id", userId).order("name").limit(200),
-      supabase.from("connections").select("id,service,display_name,open_url,deep_link,capability").eq("user_id", userId).order("display_name"),
+      supabase.from("connections").select("id,service,display_name,platform,open_url,deep_link,url_scheme,universal_link,web_fallback_url,capability,enabled,icon,aliases").eq("user_id", userId).order("display_name"),
     ]);
 
     const error = taskRes.error || eventRes.error || expenseRes.error || noteRes.error || goalRes.error || healthRes.error || categoryRes.error || profileRes.error;
@@ -243,9 +261,12 @@ export default function Home() {
         done: row.status === "done",
         dueDate: row.due_date || undefined,
         time: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
+        reminderAt: row.reminder_at || undefined,
         priority: row.priority || undefined,
-        goalId: extra?.goal_id || undefined,
+        goalId: row.goal_id || extra?.goal_id || undefined,
         goalTitle: goal?.title || undefined,
+        parentTaskId: row.parent_task_id || undefined,
+        isProject: Boolean(row.is_project),
       };
     }));
 
@@ -322,9 +343,16 @@ export default function Home() {
       id: row.id,
       service: row.service,
       displayName: row.display_name,
+      platform: row.platform || "cross_platform",
       openUrl: row.open_url || undefined,
       deepLink: row.deep_link || undefined,
+      urlScheme: row.url_scheme || undefined,
+      universalLink: row.universal_link || undefined,
+      webFallbackUrl: row.web_fallback_url || undefined,
       capability: row.capability as ConnectionItem["capability"],
+      enabled: row.enabled !== false,
+      icon: row.icon || undefined,
+      aliases: row.aliases ?? [],
     })));
 
     if (taskGoalRes.error || eventAreaRes.error || documentRes.error || contactRes.error || connectionRes.error) {
@@ -335,7 +363,7 @@ export default function Home() {
   async function refreshTasksOnly() {
     if (!supabase || !userId) return;
     const { data, error } = await supabase.from("tasks")
-      .select("id,title,area,status,due_date,due_time,priority,goal_id,goals(title)")
+      .select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,goals(title)")
       .eq("user_id", userId)
       .order("due_date", { ascending: true });
     if (error) {
@@ -352,9 +380,12 @@ export default function Home() {
         done: row.status === "done",
         dueDate: row.due_date || undefined,
         time: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
+        reminderAt: row.reminder_at || undefined,
         priority: row.priority || undefined,
         goalId: row.goal_id || undefined,
         goalTitle: goal?.title || undefined,
+        parentTaskId: row.parent_task_id || undefined,
+        isProject: Boolean(row.is_project),
       };
     }));
   }
@@ -452,7 +483,7 @@ export default function Home() {
 
   async function refreshAfterAssistantAction(action?: string) {
     if (!action) return;
-    if (action === "create_task") return refreshTasksOnly();
+    if (action === "create_task" || action === "move_task" || action === "split_task") return refreshTasksOnly();
     if (action === "create_expense") return refreshExpensesOnly();
     if (action === "create_event" || action === "create_appointment" || action === "log_health" || action === "log_fitness" || action === "cycle_start") {
       return refreshEventsAndHealth();
