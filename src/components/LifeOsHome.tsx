@@ -37,9 +37,11 @@ function when(value?: string | null) {
 
 export default function LifeOsHome({
   liveData,
+  refreshToken,
   onCommand,
 }: {
   liveData: boolean;
+  refreshToken?: string;
   onCommand: (text: string, source?: "text" | "voice") => void;
 }) {
   const [now, setNow] = useState<NowData | null>(null);
@@ -75,7 +77,7 @@ export default function LifeOsHome({
 
   useEffect(() => {
     void refresh();
-  }, [liveData]);
+  }, [liveData, refreshToken]);
 
   async function submitSearch(event: FormEvent) {
     event.preventDefault();
