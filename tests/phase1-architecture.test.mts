@@ -18,9 +18,12 @@ assert.match(directUpload, /new Upload|tus/i);
 assert.doesNotMatch(directUpload, /fetch\(["']\/api\/documents["'][\s\S]*method:\s*["']POST["']/);
 
 const migrations = [
+  "supabase/migrations/006_task_achievements_lifecycle.sql",
   "supabase/migrations/006_life_os_phase1.sql",
   "supabase/migrations/007_phase1_projects_achievements.sql",
   "supabase/migrations/008_phase1_phonebook_contacts.sql",
+  "supabase/tests/phase1_acceptance.sql",
+  "supabase/tests/phase1_phonebook_acceptance.sql",
 ];
 for (const path of migrations) {
   const sql = readFileSync(path, "utf8");
