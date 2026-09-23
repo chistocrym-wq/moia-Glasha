@@ -28,7 +28,9 @@ export async function POST(request: Request) {
     const needsTasks = needsGoals || needsCalendar || hasAny(question, ["задач", "дел", "работ", "сроч", "план"]);
     const needsFinance = hasAny(question, ["расход", "потрат", "деньг", "бюджет", "финанс"]);
     const needsWeb = body?.use_web === true || hasAny(question, [
-      "сейчас", "сегодня", "актуаль", "новост", "цена", "расписан", "билет", "погода", "курс валют", "найди в интернете"
+      "найди в интернете", "в интернете", "новост", "погода", "курс валют",
+      "актуальная цена", "текущая цена", "расписание поезд", "расписание рейс",
+      "билеты сейчас", "актуальные внешние данные"
     ]);
 
     const tasksPromise = needsTasks
