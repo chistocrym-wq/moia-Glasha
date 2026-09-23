@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { chooseAdvisorModel, fastModel } from "@/lib/model-policy";
+import { searchLife } from "@/lib/life-os-server";
 import {
   deterministicRoute,
   resolveDateToken,
@@ -1052,6 +1053,71 @@ async function advise(rt: Runtime, question: string, goalTitle: string | null, e
   return { reply: response.output_text, data: tasks ?? [], model_tier: selection.tier };
 }
 
+async function createReminderFast(
+  rt: Runtime,
+  input: { title: string; dateToken: string; time: string; recurrence: "none" | "daily" | "weekly" | "monthly" },
+) {
+  const profile = await loadProfile(rt);
+  const date = resolveDateToken(input.dateToken, profile.timezone);
+  const dueAt = zonedDateTimeToUtc(date, input.time, profile.timezone).toISOString();
+  const lowerTitle = normalize(input.title);
+  const category =
+    /оплат|плат[её]ж|сч[её]т|интернет|квартплат|коммун/i.test(lowerTitle) ? "payment" :
+    /лекар|таблет|врач|здоров|анализ|витамин/i.test(lowerTitle) ? "health" :
+    "general";
+
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("reminders").insert({
+      user_id: rt.userId,
+      title: input.title,
+      priority: "normal",
+      category,
+      recurrence: input.recurrence,
+      recurrence_interval: 1,
+      due_at: dueAt,
+      next_occurrence_at: dueAt,
+      active: true,
+    }).select("id,title,due_at,next_occurrence_at,recurrence,priority,category").single()
+  );
+  if (error) throw error;
+  return {
+    data,
+    reply: input.recurrence === "none"
+      ? `Напомню ${date} в ${input.time}: ${input.title}.`
+      : `Создала ${input.recurrence === "daily" ? "ежедневное" : input.recurrence === "weekly" ? "еженедельное" : "ежемесячное"} напоминание на ${input.time}: ${input.title}.`,
+  };
+}
+
+async function queryOverdue(rt: Runtime) {
+  const profile = await loadProfile(rt);
+  const today = localDate(profile.timezone);
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .select("id,title,area,due_date,due_time,priority,status,parent_task_id,is_project")
+      .eq("user_id", rt.userId)
+      .neq("status", "done")
+      .neq("status", "cancelled")
+      .lt("due_date", today)
+      .order("due_date", { ascending: true })
+      .limit(100)
+  );
+  if (error) throw error;
+  return {
+    data: data ?? [],
+    reply: data?.length ? `Просроченных задач: ${data.length}.` : "Просроченных задач нет.",
+  };
+}
+
+async function globalSearchFast(rt: Runtime, query: string) {
+  // searchLife performs seven narrow title/name/text lookups and never sends DB content to AI.
+  rt.metrics.supabaseQueries += 7;
+  const results = await searchLife(rt.supabase, rt.userId, query);
+  return {
+    data: results,
+    reply: results.length ? `Нашла совпадений: ${results.length}.` : `По запросу «${query}» ничего не нашла.`,
+  };
+}
+
 async function executeDeterministic(rt: Runtime, route: DeterministicRoute, rawText: string) {
   rt.metrics.intent = route.kind;
 
@@ -1064,6 +1130,9 @@ async function executeDeterministic(rt: Runtime, route: DeterministicRoute, rawT
   });
 
   if (route.kind === "query_schedule") return querySchedule(rt, route.range);
+  if (route.kind === "query_overdue") return queryOverdue(rt);
+  if (route.kind === "global_search") return globalSearchFast(rt, route.query);
+  if (route.kind === "create_reminder") return createReminderFast(rt, route);
   if (route.kind === "move_task") return moveTask(rt, route.taskQuery, route.area);
   if (route.kind === "split_task") return splitTask(rt, route.taskQuery);
 
@@ -1349,7 +1418,7 @@ export async function POST(request: Request) {
     } else {
       const summary = actionSummary(executed);
       const firstReadable = executed.find((item) =>
-        ["query_schedule","query_expenses","check_availability","find_document","open_service","contact_action","search_tickets","move_task","split_task","advice"].includes(item.action)
+        ["query_schedule","query_overdue","global_search","create_reminder","query_expenses","check_availability","find_document","open_service","contact_action","search_tickets","move_task","split_task","advice"].includes(item.action)
       );
       const reply = [
         summary,
