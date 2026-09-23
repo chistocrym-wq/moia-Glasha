@@ -1043,6 +1043,9 @@ export async function POST(request: Request) {
     const user = authData.user;
     if (!user) return privateJson({ error: "auth_required" }, 401);
 
+    const body = await request.json();
+    const text = String(body?.text ?? "").trim();
+
     rt = {
       supabase,
       userId: user.id,
@@ -1057,9 +1060,6 @@ export async function POST(request: Request) {
       },
       source: body?.source === "voice" ? "voice" : "text",
     };
-
-    const body = await request.json();
-    const text = String(body?.text ?? "").trim();
     if (!text) return privateJson({ error: "empty_text" }, 400);
 
     const segments = splitBrainDump(text);
