@@ -1109,8 +1109,8 @@ async function queryOverdue(rt: Runtime) {
 }
 
 async function globalSearchFast(rt: Runtime, query: string) {
-  // searchLife performs seven narrow title/name/text lookups and never sends DB content to AI.
-  rt.metrics.supabaseQueries += 7;
+  // One RLS-aware RPC; no database content is sent to AI.
+  rt.metrics.supabaseQueries += 1;
   const results = await searchLife(rt.supabase, rt.userId, query);
   return {
     data: results,
