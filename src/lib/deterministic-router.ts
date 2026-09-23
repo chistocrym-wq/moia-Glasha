@@ -197,7 +197,7 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
     return { kind: "query_overdue" };
   }
 
-  if (/^(?:глаша[,.]?\s*)?(?:напомни|напоминай)\b/i.test(text)) {
+  if (/^(?:глаша[,.]?\s*)?(?:напомни|напоминай)(?:\s|$)/i.test(text)) {
     const recurrence =
       /кажд(?:ый|ую)\s+день|ежеднев/i.test(text) ? "daily" :
       /кажд(?:ую|ой)\s+недел|еженедел/i.test(text) ? "weekly" :
