@@ -718,20 +718,20 @@ export default function Home() {
       const connection = findConnectionByName(localRoute.service);
       setLastResult(null);
       if (!connection) {
-        setAnswer("Такого приложения в «Подключениях» пока нет.");
-        void logLocalRoute("open_service_not_found", localStartedAt);
+        // Do not stop here: the server first checks known connections, then exact/alias contacts.
+        // It remains deterministic/Supabase-only and does not call OpenAI.
+      } else {
+        const opened = openConnectionTarget(connection);
+        const reply = connection.capability === "OPEN_ONLY"
+          ? `Открываю ${connection.displayName}. Это только запуск приложения/сайта — аккаунт к Глаше не подключён.`
+          : opened
+            ? `Открываю ${connection.displayName}. Возможность: ${connection.capability}.`
+            : `Для ${connection.displayName} пока нет рабочей ссылки.`;
+        setAnswer(reply);
+        if (voiceReplies) speakReply(reply);
+        void logLocalRoute("open_service", localStartedAt);
         return;
       }
-      const opened = openConnectionTarget(connection);
-      const reply = connection.capability === "OPEN_ONLY"
-        ? `Открываю ${connection.displayName}. Это только запуск приложения/сайта — аккаунт к Глаше не подключён.`
-        : opened
-          ? `Открываю ${connection.displayName}. Возможность: ${connection.capability}.`
-          : `Для ${connection.displayName} пока нет рабочей ссылки.`;
-      setAnswer(reply);
-      if (voiceReplies) speakReply(reply);
-      void logLocalRoute("open_service", localStartedAt);
-      return;
     }
 
     setBusy(true);
@@ -1460,7 +1460,11 @@ function ResultPreview({ result }: { result: AssistantResponse }) {
             ? formatDateTime(String(row.occurred_at))
             : row.time
               ? [row.date, row.time, row.area].filter(Boolean).map(String).join(" · ")
-              : "";
+              : row.phone
+                ? String(row.phone)
+                : row.email
+                  ? String(row.email)
+                  : String(row.subtitle || "");
       return <div className="resultRow" key={String(row.id || row.url || index)}>
         <span>{String(row.title || row.merchant || row.category || "Запись")}</span>
         <small>{secondary}</small>
