@@ -123,7 +123,7 @@ declare
 begin
   if owner_id is null then raise exception 'auth_required'; end if;
   if p_area not in ('personal','work') then raise exception 'bad_area'; end if;
-  if not exists(select 1 from public.tasks where id=p_task_id and user_id=owner_id) then
+  if not exists(select 1 from public.tasks t where t.id=p_task_id and t.user_id=owner_id) then
     raise exception 'task_not_found';
   end if;
 
@@ -140,9 +140,9 @@ begin
     set area=p_area, updated_at=now()
     where t.user_id=owner_id and t.id in (select tree.id from tree);
   else
-    update public.tasks
+    update public.tasks t
     set area=p_area, updated_at=now()
-    where id=p_task_id and user_id=owner_id;
+    where t.id=p_task_id and t.user_id=owner_id;
   end if;
 
   return query
