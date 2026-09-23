@@ -41,6 +41,15 @@ export async function PATCH(request: Request) {
       quiet_hours_end: end,
     }).eq("id", data.user.id).select("timezone,quiet_hours_enabled,quiet_hours_start,quiet_hours_end").single();
     if (error) throw error;
+
+    // Re-materialize only non-resolved notifications on the next read so changed
+    // quiet hours affect delivery without touching snoozed/done history.
+    const { error: clearError } = await db.from("notifications")
+      .delete()
+      .eq("user_id", data.user.id)
+      .in("state", ["unread", "seen"]);
+    if (clearError) throw clearError;
+
     return reply({ ok: true, preferences: profile });
   } catch (error) {
     console.error("life_preferences_patch_failed", error);
