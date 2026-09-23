@@ -233,17 +233,6 @@ export default function LifeOsHome({
     : [];
 
   return <div className="lifeOsStack">
-    <section className="panel lifeSearchPanel">
-      <div className="panelHeader"><div><p className="eyebrow">Поиск везде</p><h3>Найти в личной базе</h3></div><span className="zeroAiBadge">0 AI</span></div>
-      <form className="lifeSearchForm" onSubmit={submitSearch}>
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Задача, цель, событие, документ, контакт, мысль…" disabled={!liveData || searching} />
-        <button className="primaryButton" disabled={!liveData || searching}>{searching ? "Ищу…" : "Найти"}</button>
-      </form>
-      {searchResults.length > 0 && <div className="lifeSearchResults">{searchResults.map((item) =>
-        <div className="lifeSearchRow" key={`${item.entity_type}-${item.id}`}><span className="entityType">{item.entity_type}</span><div><b>{item.title}</b>{item.subtitle && <small>{item.subtitle}</small>}</div></div>
-      )}</div>}
-    </section>
-
     <section className="panel">
       <div className="panelHeader"><div><p className="eyebrow">Сейчас</p><h3>Только то, что требует внимания</h3></div><button className="linkButton" onClick={() => void refresh()} disabled={!liveData}>Обновить</button></div>
       {!now && <p className="muted">{liveData ? "Загружаю…" : "Доступно после входа."}</p>}
@@ -255,7 +244,19 @@ export default function LifeOsHome({
         <article><span>Здоровье</span><b>{now.health_reminder?.title || "Нет напоминаний"}</b><small>{when(now.health_reminder?.deliver_at)}</small></article>
       </div>}
     </section>
-
+    <details className="panel lifeOsTools">
+      <summary><span>Поиск, напоминания, уведомления и обзоры</span><small>Открыть инструменты Life OS</small></summary>
+      <div className="lifeOsToolsBody">
+    <section className="panel lifeSearchPanel">
+      <div className="panelHeader"><div><p className="eyebrow">Поиск везде</p><h3>Найти в личной базе</h3></div><span className="zeroAiBadge">0 AI</span></div>
+      <form className="lifeSearchForm" onSubmit={submitSearch}>
+        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Задача, цель, событие, документ, контакт, мысль…" disabled={!liveData || searching} />
+        <button className="primaryButton" disabled={!liveData || searching}>{searching ? "Ищу…" : "Найти"}</button>
+      </form>
+      {searchResults.length > 0 && <div className="lifeSearchResults">{searchResults.map((item) =>
+        <div className="lifeSearchRow" key={`${item.entity_type}-${item.id}`}><span className="entityType">{item.entity_type}</span><div><b>{item.title}</b>{item.subtitle && <small>{item.subtitle}</small>}</div></div>
+      )}</div>}
+    </section>
     <div className="twoColumns">
       <section className="panel">
         <div className="panelHeader"><div><p className="eyebrow">Напоминания</p><h3>Один раз или регулярно</h3></div></div>
@@ -296,6 +297,8 @@ export default function LifeOsHome({
       {review && <ReviewView review={review} unfinished={unfinished} onTaskAction={taskAction} onInboxAction={inboxAction} onCommand={onCommand} />}
     </section>
     {status && <p className="lifeOsStatus">{status}</p>}
+      </div>
+    </details>
   </div>;
 }
 
