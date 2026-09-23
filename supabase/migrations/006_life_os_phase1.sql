@@ -108,6 +108,7 @@ $$;
 create or replace function public.validate_glasha_entity_link()
 returns trigger
 language plpgsql
+security definer
 set search_path = public
 as $$
 begin
@@ -129,6 +130,7 @@ for each row execute function public.validate_glasha_entity_link();
 create or replace function public.validate_glasha_reminder_link()
 returns trigger
 language plpgsql
+security definer
 set search_path = public
 as $$
 begin
@@ -144,6 +146,28 @@ drop trigger if exists validate_glasha_reminder_link on public.reminders;
 create trigger validate_glasha_reminder_link
 before insert or update of linked_entity_type, linked_entity_id, user_id on public.reminders
 for each row execute function public.validate_glasha_reminder_link();
+
+create or replace function public.validate_glasha_notification_reminder()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  if not exists (
+    select 1 from public.reminders r
+    where r.id = new.reminder_id and r.user_id = new.user_id
+  ) then
+    raise exception 'notification_reminder_must_belong_to_same_user';
+  end if;
+  return new;
+end;
+$;
+
+drop trigger if exists validate_glasha_notification_reminder on public.notifications;
+create trigger validate_glasha_notification_reminder
+before insert or update of reminder_id, user_id on public.notifications
+for each row execute function public.validate_glasha_notification_reminder();
 
 alter table public.memories enable row level security;
 alter table public.entity_links enable row level security;
@@ -168,3 +192,8 @@ end $$;
 
 grant select,insert,update,delete on public.memories,public.entity_links,public.reminders,public.notifications to authenticated;
 revoke all on public.memories,public.entity_links,public.reminders,public.notifications from anon;
+
+revoke all on function public.glasha_entity_owned(uuid,text,uuid) from public, anon, authenticated;
+revoke all on function public.validate_glasha_entity_link() from public, anon, authenticated;
+revoke all on function public.validate_glasha_reminder_link() from public, anon, authenticated;
+revoke all on function public.validate_glasha_notification_reminder() from public, anon, authenticated;
