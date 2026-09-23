@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { chooseAdvisorModel, fastModel } from "@/lib/model-policy";
 import { searchLife } from "@/lib/life-os-server";
+import { contactQueryVariants, normalizeContactKey, normalizePhone } from "@/lib/contacts";
 import {
   deterministicRoute,
   resolveDateToken,
@@ -60,7 +61,7 @@ type Parsed = {
   document_query: string | null;
   service_name: string | null;
   contact_name: string | null;
-  contact_method: "call" | "telegram" | "email" | null;
+  contact_method: "call" | "telegram" | "email" | "show_phone" | null;
   message_text: string | null;
   route_from: string | null;
   route_to: string | null;
@@ -108,7 +109,7 @@ const schema = {
     document_query: { type: ["string","null"] },
     service_name: { type: ["string","null"] },
     contact_name: { type: ["string","null"] },
-    contact_method: { type: ["string","null"], enum: ["call","telegram","email",null] },
+    contact_method: { type: ["string","null"], enum: ["call","telegram","email","show_phone",null] },
     message_text: { type: ["string","null"] },
     route_from: { type: ["string","null"] },
     route_to: { type: ["string","null"] },
@@ -147,7 +148,19 @@ type Connection = {
   icon: string | null;
   aliases: string[];
 };
-type Contact = { id: string; name: string; relation: string | null; phone: string | null; email: string | null; telegram_username: string | null };
+type ContactPhone = { label?: string; value?: string; normalized?: string };
+type ContactEmail = { label?: string; value?: string };
+type Contact = {
+  id: string;
+  name: string;
+  relation: string | null;
+  phone: string | null;
+  email: string | null;
+  telegram_username: string | null;
+  phone_numbers: ContactPhone[] | null;
+  emails: ContactEmail[] | null;
+  aliases: string[] | null;
+};
 type Goal = { id: string; title: string };
 
 type Metrics = {
@@ -254,7 +267,7 @@ async function loadConnections(rt: Runtime) {
 async function loadContacts(rt: Runtime) {
   if (rt.contacts) return rt.contacts;
   const { data, error } = await tracked(rt,
-    rt.supabase.from("contacts").select("id,name,relation,phone,email,telegram_username").eq("user_id", rt.userId).limit(200)
+    rt.supabase.from("contacts").select("id,name,relation,phone,email,telegram_username,phone_numbers,emails,aliases").eq("user_id", rt.userId).limit(5000)
   );
   if (error) throw error;
   return (rt.contacts = data ?? []);
@@ -390,7 +403,7 @@ async function parseWithAi(rt: Runtime, text: string): Promise<Parsed> {
       "Ты — fallback-маршрутизатор личного помощника Глаша. Используйся только когда deterministic parser не смог уверенно понять фразу. " +
       "Не придумывай дату, время, человека, сумму или другие отсутствующие факты. Если обязательных данных не хватает, needs_clarification=true и задай ОДИН короткий вопрос. " +
       "Личная задача -> create_task area=personal. Очевидный рабочий контекст -> create_task area=work. " +
-      "Будущий звонок/сообщение с датой -> create_task, а немедленный звонок/Telegram -> contact_action. " +
+      "Будущий звонок/сообщение с датой -> create_task, а немедленный звонок/Telegram/email/показ номера -> contact_action. " +
       "Врач с датой/временем -> create_event event_kind=appointment area=health. Тренировка -> log_health health_kind=fitness. " +
       "Вопрос про уже сохранённые дела -> query_schedule. Свободное время -> check_availability. Поиск metadata документа -> find_document. " +
       "Открыть сервис -> open_service. Перенести существующую задачу между личным и работой -> move_task; заполни task_query и target_area. " +
@@ -983,7 +996,11 @@ async function openService(rt: Runtime, serviceName: string) {
       wanted.includes(normalize(item.display_name)) ||
       aliases.some((alias: string) => normalize(alias) === wanted || normalize(alias).includes(wanted) || wanted.includes(normalize(alias)));
   });
-  if (!connection) return { reply: "Такого приложения в «Подключениях» пока нет." };
+  if (!connection) {
+    const contactResult = await contactAction(rt, { contactName: serviceName, method: "show_phone" });
+    if (!String(contactResult.reply || "").startsWith("Контакт не найден")) return contactResult;
+    return { reply: "Такого приложения или контакта пока нет." };
+  }
   if (!connection.enabled) return { reply: `${connection.display_name} скрыто в «Подключениях». Включи его, чтобы открывать командой.` };
 
   const nativeUrl = connection.deep_link || connection.url_scheme;
@@ -1010,18 +1027,116 @@ async function openService(rt: Runtime, serviceName: string) {
   };
 }
 
-async function contactAction(rt: Runtime, input: { contactName: string; method: "call" | "telegram" | "email"; messageText?: string | null }) {
+function contactPhones(contact: Contact) {
+  const values = Array.isArray(contact.phone_numbers) ? contact.phone_numbers : [];
+  const merged = [
+    ...values.map((item) => ({
+      label: String(item.label || "основной"),
+      value: String(item.value || ""),
+      normalized: normalizePhone(String(item.normalized || item.value || "")),
+    })),
+    ...(contact.phone ? [{ label: "основной", value: contact.phone, normalized: normalizePhone(contact.phone) }] : []),
+  ].filter((item) => item.normalized);
+
+  const unique = new Map<string,{ label: string; value: string; normalized: string }>();
+  for (const item of merged) if (!unique.has(item.normalized)) unique.set(item.normalized, item);
+  return [...unique.values()];
+}
+
+function contactEmails(contact: Contact) {
+  const values = Array.isArray(contact.emails) ? contact.emails : [];
+  const merged = [
+    ...values.map((item) => ({ label: String(item.label || "основной"), value: String(item.value || "").trim() })),
+    ...(contact.email ? [{ label: "основной", value: contact.email }] : []),
+  ].filter((item) => item.value);
+  const unique = new Map<string,{ label: string; value: string }>();
+  for (const item of merged) {
+    const key = item.value.toLocaleLowerCase("en-US");
+    if (!unique.has(key)) unique.set(key, item);
+  }
+  return [...unique.values()];
+}
+
+function contactMatchScore(contact: Contact, query: string) {
+  const variants = contactQueryVariants(query);
+  const fields = [
+    normalizeContactKey(contact.name),
+    normalizeContactKey(contact.relation || ""),
+    ...((contact.aliases || []).map(normalizeContactKey)),
+  ].filter(Boolean);
+
+  let score = 0;
+  for (const variant of variants) {
+    for (const field of fields) {
+      if (variant === field) score = Math.max(score, 100);
+      else if (field.startsWith(variant) || variant.startsWith(field)) score = Math.max(score, 80);
+      else if (field.includes(variant) || variant.includes(field)) score = Math.max(score, 60);
+    }
+  }
+  return score;
+}
+
+async function contactAction(rt: Runtime, input: { contactName: string; method: "call" | "telegram" | "email" | "show_phone"; messageText?: string | null }) {
   const contacts = await loadContacts(rt);
-  const wanted = normalize(input.contactName);
-  const contact = contacts.find((item) => normalize(item.name) === wanted)
-    ?? contacts.find((item) => normalize(item.name).includes(wanted) || wanted.includes(normalize(item.name)));
-  if (!contact) return { reply: "Контакт не найден. Добавь его в раздел «Контакты»." };
+  const scored = contacts
+    .map((contact) => ({ contact, score: contactMatchScore(contact, input.contactName) }))
+    .filter((item) => item.score > 0)
+    .sort((a,b) => b.score - a.score || a.contact.name.localeCompare(b.contact.name, "ru"));
+
+  if (!scored.length) return { reply: "Контакт не найден. Добавь его в раздел «Контакты»." };
+
+  const topScore = scored[0].score;
+  const top = scored.filter((item) => item.score === topScore);
+  if (top.length > 1) {
+    return {
+      needs_clarification: true,
+      data: top.slice(0,6).map(({ contact }) => ({
+        id: contact.id,
+        title: contact.name,
+        subtitle: contact.relation || "контакт",
+      })),
+      reply: `Нашла несколько контактов: ${top.slice(0,6).map(({ contact }) => contact.name).join(", ")}. Уточни, кого выбрать.`,
+    };
+  }
+
+  const contact = top[0].contact;
+  const phones = contactPhones(contact);
+  const emails = contactEmails(contact);
+
+  if (input.method === "show_phone") {
+    if (!phones.length) return { reply: `У ${contact.name} не сохранён телефон.` };
+    return {
+      data: phones.map((phone,index) => ({
+        id: `${contact.id}-phone-${index}`,
+        title: `${contact.name} · ${phone.label}`,
+        phone: phone.value,
+        action_url: `tel:${phone.normalized}`,
+        requires_confirmation: true,
+      })),
+      reply: phones.length === 1
+        ? `У ${contact.name} один номер.`
+        : `У ${contact.name} несколько номеров. Выбери нужный.`,
+    };
+  }
 
   if (input.method === "call") {
-    if (!contact.phone) return { reply: `У ${contact.name} не сохранён телефон.` };
+    if (!phones.length) return { reply: `У ${contact.name} не сохранён телефон.` };
+    if (phones.length > 1) {
+      return {
+        needs_clarification: true,
+        data: phones.map((phone,index) => ({
+          id: `${contact.id}-phone-${index}`,
+          title: `${contact.name} · ${phone.label}`,
+          phone: phone.value,
+          action_url: `tel:${phone.normalized}`,
+          requires_confirmation: true,
+        })),
+        reply: `${contact.name}: ${phones.map((phone) => phone.label).join(" или ")}? Выбери номер.`,
+      };
+    }
     return {
-      data: [{ id: contact.id, title: `Позвонить ${contact.name}`, action_url: `tel:${contact.phone}`, requires_confirmation: true }],
-      reply: `Нашла номер ${contact.name}. Нажми «Позвонить», чтобы начать вызов.`,
+      data: [{ id: contact.id, title: `Позвонить ${contact.name}`, action_url: `tel:${phones[0].normalized}`, requires_confirmation: true }],
+      reply: `Нашла номер ${contact.name}. Нажми «Позвонить», чтобы открыть системный набор номера.`,
     };
   }
 
@@ -1044,12 +1159,25 @@ async function contactAction(rt: Runtime, input: { contactName: string; method: 
     };
   }
 
-  if (!contact.email) return { reply: `У ${contact.name} не сохранён email.` };
+  if (!emails.length) return { reply: `У ${contact.name} не сохранён email.` };
+  if (emails.length > 1) {
+    return {
+      needs_clarification: true,
+      data: emails.map((email,index) => ({
+        id: `${contact.id}-email-${index}`,
+        title: `${contact.name} · ${email.label}`,
+        email: email.value,
+        action_url: `mailto:${email.value}`,
+        requires_confirmation: true,
+      })),
+      reply: `У ${contact.name} несколько email. Выбери нужный.`,
+    };
+  }
   return {
     data: [{
       id: contact.id,
       title: `Написать ${contact.name}`,
-      action_url: `mailto:${contact.email}${input.messageText ? `?body=${encodeURIComponent(input.messageText)}` : ""}`,
+      action_url: `mailto:${emails[0].value}${input.messageText ? `?body=${encodeURIComponent(input.messageText)}` : ""}`,
       requires_confirmation: true,
     }],
     reply: "Письмо подготовлено, но не отправлено.",
