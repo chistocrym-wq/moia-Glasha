@@ -160,7 +160,7 @@ begin
 
   if tg_op = 'DELETE' then return old; else return new; end if;
 end;
-$;
+$$;
 
 drop trigger if exists glasha_sync_parent_progress on public.tasks;
 create trigger glasha_sync_parent_progress
@@ -235,7 +235,7 @@ language sql
 stable
 security invoker
 set search_path = public
-as $
+as $$
   select
     p.id,
     p.title,
@@ -264,7 +264,7 @@ as $
     and p.status <> 'cancelled'
   group by p.id,g.title
   order by p.due_date asc nulls last,p.due_time asc nulls last,p.created_at desc;
-$;
+$$;
 
 revoke all on function public.glasha_guard_parent_completion() from public,anon,authenticated;
 revoke all on function public.glasha_sync_parent_progress() from public,anon,authenticated;
