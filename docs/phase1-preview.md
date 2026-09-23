@@ -6,7 +6,7 @@ This branch is preview-only.
 - Production branch and production Supabase must not be changed before Controller live E2E.
 - Draft PR: #4.
 - Netlify deploy-preview must use a separate preview/test Supabase project before live E2E.
-- Apply migrations in order on preview/test: `006_life_os_phase1.sql`, `007_phase1_projects_achievements.sql`, `008_phase1_phonebook_contacts.sql`.
+- Apply the inherited task lifecycle first, then Phase 1 additions on preview/test: `006_task_achievements_lifecycle.sql` → `006_life_os_phase1.sql` → `007_phase1_projects_achievements.sql` → `008_phase1_phonebook_contacts.sql`.
 - Run rollback-only DB suites `supabase/tests/phase1_acceptance.sql` and `supabase/tests/phase1_phonebook_acceptance.sql`.
 - Controller then checks UI/E2E in the deploy preview.
 - Only after explicit Controller PASS can promotion to production be a separate action.
