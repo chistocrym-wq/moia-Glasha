@@ -2,7 +2,7 @@ export type DeterministicRoute =
   | { kind: "open_service"; service: string }
   | { kind: "query_schedule"; range: "today" | "tomorrow" }
   | { kind: "find_document"; query: string }
-  | { kind: "contact_action"; contactName: string; method: "call" | "telegram" | "email"; messageText?: string }
+  | { kind: "contact_action"; contactName: string; method: "call" | "telegram" | "email" | "show_phone"; messageText?: string }
   | { kind: "create_expense"; amount: number; note: string; categorySlug: string | null }
   | { kind: "query_expenses"; categorySlug: string | null; monthToken: string | null }
   | { kind: "create_task"; title: string; area: "personal" | "work"; dateToken: string; time: string | null }
@@ -187,8 +187,20 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
     return { kind: "find_document", query: query || "документ" };
   }
 
-  if (/^позвони\s+/i.test(text) && !hasFutureCue(text)) {
-    const contactName = tidy(text.replace(/^позвони\s+/i, "").replace(/\s+сейчас$/i, ""));
+  const openContact = text.match(/^(?:глаша[,.]?\s*)?открой\s+контакт\s+(.+)$/i);
+  if (openContact) {
+    const contactName = tidy(openContact[1]);
+    if (contactName) return { kind: "contact_action", contactName, method: "show_phone" };
+  }
+
+  const showPhone = text.match(/^(?:глаша[,.]?\s*)?покажи\s+(?:номер|телефон)\s+(.+)$/i);
+  if (showPhone) {
+    const contactName = tidy(showPhone[1]);
+    if (contactName) return { kind: "contact_action", contactName, method: "show_phone" };
+  }
+
+  if (/^(?:позвони|набери)\s+/i.test(text) && !hasFutureCue(text)) {
+    const contactName = tidy(text.replace(/^(?:позвони|набери)\s+/i, "").replace(/\s+сейчас$/i, ""));
     if (contactName) return { kind: "contact_action", contactName, method: "call" };
   }
 
