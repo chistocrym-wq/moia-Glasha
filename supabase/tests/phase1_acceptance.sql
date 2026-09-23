@@ -11,9 +11,9 @@ insert into auth.users(
   id,aud,role,email,encrypted_password,email_confirmed_at,
   raw_app_meta_data,raw_user_meta_data,created_at,updated_at,is_sso_user,is_anonymous
 )
-select a,'authenticated','authenticated','phase1-a-'||a||'@example.invalid','',now(),'{}','{}',now(),now(),false,false from phase1_test_ids
+select a,'authenticated','authenticated','phase1-a-'||a||'@example.invalid','',now(),'{}'::jsonb,'{}'::jsonb,now(),now(),false,false from phase1_test_ids
 union all
-select b,'authenticated','authenticated','phase1-b-'||b||'@example.invalid','',now(),'{}','{}',now(),now(),false,false from phase1_test_ids;
+select b,'authenticated','authenticated','phase1-b-'||b||'@example.invalid','',now(),'{}'::jsonb,'{}'::jsonb,now(),now(),false,false from phase1_test_ids;
 
 -- User A creates owned entities under real authenticated RLS.
 set local role authenticated;
@@ -98,7 +98,7 @@ begin
   where id in ((select project_a from phase1_test_ids),(select child_1 from phase1_test_ids),(select child_2 from phase1_test_ids),(select child_3 from phase1_test_ids),(select child_4 from phase1_test_ids))
     and area='work';
   if n <> 5 then raise exception 'phase1 cascade move expected 5 rows got %',n; end if;
-end $;
+end $$;
 
 with inserted as (
   insert into public.reminders(
@@ -127,7 +127,7 @@ begin
   if n <> 1 then raise exception 'phase1 own notification failed'; end if;
   select count(*) into n from public.glasha_global_search('__phase1_rls_task_a__');
   if n <> 1 then raise exception 'phase1 global search failed for owner'; end if;
-end $;
+end $$;
 
 -- User B must not see A's rows.
 select set_config('request.jwt.claim.sub',(select b::text from phase1_test_ids),true);
@@ -143,7 +143,7 @@ begin
   if n <> 0 then raise exception 'phase1 RLS leak: notifications'; end if;
   select count(*) into n from public.glasha_global_search('__phase1_rls_task_a__');
   if n <> 0 then raise exception 'phase1 RLS leak: global search RPC'; end if;
-end $;
+end $$;
 
 -- Cross-user relation/notification references must be rejected even if UUIDs are known.
 do $$

@@ -11,9 +11,9 @@ insert into auth.users(
   id,aud,role,email,encrypted_password,email_confirmed_at,
   raw_app_meta_data,raw_user_meta_data,created_at,updated_at,is_sso_user,is_anonymous
 )
-select a,'authenticated','authenticated','phonebook-a-'||a||'@example.invalid','',now(),'{}','{}',now(),now(),false,false from phonebook_test_ids
+select a,'authenticated','authenticated','phonebook-a-'||a||'@example.invalid','',now(),'{}'::jsonb,'{}'::jsonb,now(),now(),false,false from phonebook_test_ids
 union all
-select b,'authenticated','authenticated','phonebook-b-'||b||'@example.invalid','',now(),'{}','{}',now(),now(),false,false from phonebook_test_ids;
+select b,'authenticated','authenticated','phonebook-b-'||b||'@example.invalid','',now(),'{}'::jsonb,'{}'::jsonb,now(),now(),false,false from phonebook_test_ids;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub',(select a::text from phonebook_test_ids),true);

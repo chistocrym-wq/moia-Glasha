@@ -22,6 +22,7 @@ const migrations = [
   "supabase/migrations/006_life_os_phase1.sql",
   "supabase/migrations/007_phase1_projects_achievements.sql",
   "supabase/migrations/008_phase1_phonebook_contacts.sql",
+  "supabase/migrations/009_phase1_projects_achievements_hotfix.sql",
   "supabase/tests/phase1_acceptance.sql",
   "supabase/tests/phase1_phonebook_acceptance.sql",
 ];
@@ -29,6 +30,12 @@ for (const path of migrations) {
   const sql = readFileSync(path, "utf8");
   assert.doesNotMatch(sql, /\b(?:as|do) \$(?!\$)/i, `${path} contains an invalid single-dollar SQL delimiter`);
   assert.doesNotMatch(sql, /\n\$(?!\$);/, `${path} contains an invalid single-dollar SQL terminator`);
+  assert.doesNotMatch(sql, /end \$(?!\$);/i, `${path} contains an invalid single-dollar PL/pgSQL block terminator`);
+}
+
+for (const path of ["supabase/tests/phase1_acceptance.sql", "supabase/tests/phase1_phonebook_acceptance.sql"]) {
+  const sql = readFileSync(path, "utf8");
+  assert.doesNotMatch(sql, /raw_app_meta_data,raw_user_meta_data[\s\S]{0,500}?\'\{\}\',\'\{\}\'/i, `${path} must cast auth metadata fixtures to jsonb`);
 }
 
 const phonebook = readFileSync("src/components/PhonebookImport.tsx", "utf8");
