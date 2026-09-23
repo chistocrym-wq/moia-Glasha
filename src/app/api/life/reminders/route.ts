@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createReminder } from "@/lib/life-os-server";
+import { createReminder, zonedDateTimeToUtc } from "@/lib/life-os-server";
 import type { Recurrence } from "@/lib/life-os";
 
 export const dynamic = "force-dynamic";
@@ -35,8 +35,17 @@ export async function POST(request: Request) {
     if (!data.user) return reply({ error: "auth_required" }, 401);
     const body = await request.json();
     const title = String(body?.title || "").trim();
-    const dueAt = String(body?.due_at || "").trim();
     const recurrence = String(body?.recurrence || "none") as Recurrence;
+    let dueAt = String(body?.due_at || "").trim();
+    if (body?.local_date && body?.local_time) {
+      const { data: profile, error: profileError } = await db.from("profiles").select("timezone").eq("id", data.user.id).maybeSingle();
+      if (profileError) throw profileError;
+      dueAt = zonedDateTimeToUtc(
+        String(body.local_date),
+        String(body.local_time).slice(0,5),
+        profile?.timezone || "Europe/Berlin",
+      ).toISOString();
+    }
     if (!title || Number.isNaN(new Date(dueAt).getTime())) return reply({ error: "title_and_due_at_required" }, 400);
     if (!["none","daily","weekly","monthly"].includes(recurrence)) return reply({ error: "bad_recurrence" }, 400);
     const reminder = await createReminder(db, data.user.id, {
