@@ -79,14 +79,15 @@ function labelFromParams(params: string) {
 }
 
 function stableHash(value: string) {
-  let hash = BigInt("14695981039346656037");
-  const prime = BigInt("1099511628211");
+  // Two 32-bit hashes avoid BigInt/crypto dependencies and keep VCF parsing synchronous.
+  let a = 0x811c9dc5;
+  let b = 0x9e3779b9;
   const bytes = new TextEncoder().encode(value);
   for (const byte of bytes) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * prime);
+    a = Math.imul(a ^ byte, 0x01000193) >>> 0;
+    b = Math.imul(b ^ (byte + 0x51), 0x85ebca6b) >>> 0;
   }
-  return hash.toString(16).padStart(16, "0");
+  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
 }
 
 function fingerprint(name: string, phones: ImportedPhone[], emails: ImportedEmail[]) {
