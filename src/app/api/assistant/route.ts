@@ -23,6 +23,8 @@ type Action =
   | "open_service"
   | "contact_action"
   | "search_tickets"
+  | "move_task"
+  | "split_task"
   | "advice";
 
 type RouteType = "LOCAL" | "SUPABASE_ONLY" | "AI_FAST" | "AI_DEEP" | "WEB_SEARCH";
@@ -60,6 +62,8 @@ type Parsed = {
   route_to: string | null;
   travel_date: string | null;
   after_time: string | null;
+  task_query: string | null;
+  target_area: "personal" | "work" | null;
   tags: string[];
   confidence: number;
   needs_clarification: boolean;
@@ -73,7 +77,7 @@ const schema = {
     action: { type: "string", enum: [
       "create_expense","create_task","create_event","log_health","create_goal","save_note",
       "query_schedule","query_expenses","check_availability","find_document","open_service",
-      "contact_action","search_tickets","advice"
+      "contact_action","search_tickets","move_task","split_task","advice"
     ] },
     title: { type: ["string","null"] },
     description: { type: ["string","null"] },
@@ -106,6 +110,8 @@ const schema = {
     route_to: { type: ["string","null"] },
     travel_date: { type: ["string","null"] },
     after_time: { type: ["string","null"] },
+    task_query: { type: ["string","null"] },
+    target_area: { type: ["string","null"], enum: ["personal","work",null] },
     tags: { type: "array", items: { type: "string" } },
     confidence: { type: "number", minimum: 0, maximum: 1 },
     needs_clarification: { type: "boolean" },
@@ -116,13 +122,27 @@ const schema = {
     "due_date","due_time","event_kind","start_at","end_at","all_day","health_kind","goal_kind","goal_title",
     "target_date","query_range","query_start_date","query_end_date","duration_minutes","document_query",
     "service_name","contact_name","contact_method","message_text","route_from","route_to","travel_date",
-    "after_time","tags","confidence","needs_clarification","clarification_question"
+    "after_time","task_query","target_area","tags","confidence","needs_clarification","clarification_question"
   ],
 } as const;
 
 type Profile = { timezone: string; default_currency: string };
 type Category = { id: string; name: string; slug: string; keywords: string[] | null };
-type Connection = { id: string; service: string; display_name: string; open_url: string | null; deep_link: string | null; capability: string };
+type Connection = {
+  id: string;
+  service: string;
+  display_name: string;
+  platform: string;
+  open_url: string | null;
+  deep_link: string | null;
+  url_scheme: string | null;
+  universal_link: string | null;
+  web_fallback_url: string | null;
+  capability: string;
+  enabled: boolean;
+  icon: string | null;
+  aliases: string[];
+};
 type Contact = { id: string; name: string; relation: string | null; phone: string | null; email: string | null; telegram_username: string | null };
 type Goal = { id: string; title: string };
 
@@ -221,7 +241,7 @@ async function loadConnections(rt: Runtime) {
   if (cached) return (rt.connections = cached);
 
   const { data, error } = await tracked(rt,
-    rt.supabase.from("connections").select("id,service,display_name,open_url,deep_link,capability").eq("user_id", rt.userId)
+    rt.supabase.from("connections").select("id,service,display_name,platform,open_url,deep_link,url_scheme,universal_link,web_fallback_url,capability,enabled,icon,aliases").eq("user_id", rt.userId)
   );
   if (error) throw error;
   return (rt.connections = cacheSet(connectionsCache, rt.userId, data ?? []));
@@ -369,7 +389,9 @@ async function parseWithAi(rt: Runtime, text: string): Promise<Parsed> {
       "Будущий звонок/сообщение с датой -> create_task, а немедленный звонок/Telegram -> contact_action. " +
       "Врач с датой/временем -> create_event event_kind=appointment area=health. Тренировка -> log_health health_kind=fitness. " +
       "Вопрос про уже сохранённые дела -> query_schedule. Свободное время -> check_availability. Поиск metadata документа -> find_document. " +
-      "Открыть сервис -> open_service. Поиск билетов -> search_tickets. Сложный разбор -> advice. " +
+      "Открыть сервис -> open_service. Перенести существующую задачу между личным и работой -> move_task; заполни task_query и target_area. " +
+      "Разбить существующую задачу на шаги -> split_task; заполни task_query. Не создавай новую родительскую задачу. " +
+      "Поиск билетов -> search_tickets. Сложный разбор -> advice. " +
       "Для расходов используй стандартные slug: housing,groceries,coffee_cafes,self_care,entertainment,education,child,transport,health,subscriptions,travel,work,other. " +
       "Отвечай только по JSON-схеме.",
     input:
