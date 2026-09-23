@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AssistantAvatar, GlashaCharacter, type GlashaImage } from "@/components/GlashaCharacter";
 import { InstallGlashaTile } from "@/components/PwaClient";
+import LifeOsHome from "@/components/LifeOsHome";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { deterministicRoute } from "@/lib/deterministic-router";
 import {
@@ -757,7 +758,11 @@ export default function Home() {
     const task = tasks.find((item) => item.id === id);
     if (!task) return;
     const nextStatus = task.done ? "todo" : "done";
-    const { error } = await supabase.from("tasks").update({ status: nextStatus, updated_at: new Date().toISOString() }).eq("id", id);
+    const { error } = await supabase.from("tasks").update({
+      status: nextStatus,
+      completed_at: nextStatus === "done" ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", id);
     if (error) setAnswer("Не смогла изменить задачу.");
     else {
       setTasks((items) => items.map((item) => item.id === id ? { ...item, done: nextStatus === "done" } : item));
@@ -1188,21 +1193,12 @@ export default function Home() {
     }
   }
 
-  const pendingPersonal = tasks.filter((item) => !item.done && item.area === "Личное").length;
-  const pendingWork = tasks.filter((item) => !item.done && item.area === "Работа").length;
   const expenseTotals = useMemo(() => {
     const totals: Record<string, number> = {};
     for (const item of expenses) totals[item.currency] = (totals[item.currency] || 0) + item.amount;
     return totals;
   }, [expenses]);
   const financeTotalText = Object.entries(expenseTotals).map(([currency, amount]) => formatMoney(amount, currency)).join(" · ") || "0";
-  const todayOverview = [
-    { label: "Личных дел", value: pendingPersonal, tone: "pink" },
-    { label: "По работе", value: pendingWork, tone: "blue" },
-    { label: "Событий", value: events.length, tone: "green" },
-    { label: "Расходов", value: financeTotalText, tone: "yellow" },
-  ];
-
   const connectionText =
     authState === "setup" ? "РЕЖИМ НАСТРОЙКИ · данные на экране демонстрационные и не сохраняются"
     : authState === "signed_out" ? "SUPABASE ПОДКЛЮЧЁН · войди, чтобы открыть личные данные"
@@ -1252,14 +1248,7 @@ export default function Home() {
           {lastResult && <ResultPreview result={lastResult}/>}
         </div><div className="heroGlasha"><GlashaCharacter image="home" priority className="heroCharacter" alt="Глаша рядом" /><span className="speechBubble">Я рядом ♡</span></div></section>
 
-        <div className="overviewGrid">{todayOverview.map((x) => <article key={x.label} className={`statCard ${x.tone}`}><span>{x.label}</span><strong>{x.value}</strong></article>)}</div>
-
-        <div className="twoColumns"><section className="panel"><div className="panelHeader"><div><p className="eyebrow">Сейчас</p><h3>Что требует внимания</h3></div><button className="linkButton" onClick={() => setActive("tasks")}>Все дела →</button></div>
-          <div className="taskList">{tasks.filter(t => !t.done).slice(0, 5).map(t => <div key={t.id} className="taskRow taskRowStatic"><button className="checkButton" onClick={() => toggleTask(t.id)}><span className="checkCircle"/></button><span className="taskText"><b>{t.title}</b><small>{t.area}{t.dueDate ? ` · ${t.dueDate}` : ""}{t.time ? ` · ${t.time}` : ""}</small></span></div>)}</div></section>
-          <section className="panel softPanel"><div className="panelHeader"><div><p className="eyebrow">Глаша заметила</p><h3>Не потерять</h3></div></div>
-            <div className="insight"><span className="insightIcon">✦</span><div><b>{notes.length ? `${notes.length} мыслей ждут разбора` : "Входящие мысли пусты"}</b><p>{notes.length ? "Их можно превратить в задачи, цели или просто оставить как мысли." : "Говори всё, что приходит в голову — я сохраню."}</p></div></div>
-            <div className="insight"><span className="insightIcon">☆</span><div><b>{goals.length ? `${goals.length} активных целей и мечт` : "Добавь первую мечту"}</b><p>Советчик сможет разложить цель на конкретные шаги.</p></div></div>
-          </section></div>
+        <LifeOsHome liveData={liveData} refreshToken={answer} onCommand={processCommand} />
       </> : <SectionContent
         active={active}
         currentImage={current.image}
