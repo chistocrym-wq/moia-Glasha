@@ -15,6 +15,7 @@ export function isSensitiveSpeechText(value: string) {
     /полный\s+паспорт/,
     /паспортн(?:ые|ый|ая)\s+данн/,
     /снилс/,
+    /(?:\+?\d[\s().-]*){7,}/,
   ].some((pattern) => pattern.test(text));
 }
 
