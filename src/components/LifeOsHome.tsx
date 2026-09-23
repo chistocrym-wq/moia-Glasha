@@ -179,6 +179,20 @@ export default function LifeOsHome({
     }
   }
 
+  async function inboxAction(id: string) {
+    try {
+      await jsonFetch("/api/life/inbox", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action: "processed" }),
+      });
+      if (review?.kind === "weekly") await loadReview("weekly");
+    } catch (error) {
+      console.error("weekly_inbox_action_failed", error);
+      setStatus("Не получилось разобрать входящее.");
+    }
+  }
+
   async function taskAction(id: string, action: "cancel" | "move_tomorrow") {
     try {
       await jsonFetch("/api/life/tasks", {
@@ -265,7 +279,7 @@ export default function LifeOsHome({
       <div className="panelHeader"><div><p className="eyebrow">Ритуалы Глаши</p><h3>Утро · Вечер · Неделя</h3></div></div>
       <div className="reviewTabs"><button onClick={() => void loadReview("morning")}>Утро</button><button onClick={() => void loadReview("evening")}>Вечер</button><button onClick={() => void loadReview("weekly")}>Неделя</button></div>
       {reviewBusy && <p className="muted">Собираю из базы…</p>}
-      {review && <ReviewView review={review} unfinished={unfinished} onTaskAction={taskAction} onCommand={onCommand} />}
+      {review && <ReviewView review={review} unfinished={unfinished} onTaskAction={taskAction} onInboxAction={inboxAction} onCommand={onCommand} />}
     </section>
     {status && <p className="lifeOsStatus">{status}</p>}
   </div>;
@@ -275,11 +289,13 @@ function ReviewView({
   review,
   unfinished,
   onTaskAction,
+  onInboxAction,
   onCommand,
 }: {
   review: ReviewData;
   unfinished: Array<{ id: string; title: string; area?: string; due_date?: string }>;
   onTaskAction: (id: string, action: "cancel" | "move_tomorrow") => Promise<void>;
+  onInboxAction: (id: string) => Promise<void>;
   onCommand: (text: string, source?: "text" | "voice") => void;
 }) {
   if (review.kind === "morning") {
@@ -292,9 +308,14 @@ function ReviewView({
     const completed = (review.completed as Array<{ id: string; title: string }> || []);
     return <div className="reviewContent"><p><b>Выполнено:</b> {completed.length}. <b>Осталось:</b> {unfinished.length}.</p>{unfinished.slice(0,12).map((task) => <div className="reviewTask" key={task.id}><div><b>{task.title}</b><small>{task.due_date || "без даты"}</small></div><div className="rowActions"><button onClick={() => void onTaskAction(task.id,"move_tomorrow")}>На завтра</button><button onClick={() => void onTaskAction(task.id,"cancel")}>Отменить</button><button onClick={() => onCommand(`Разбей задачу «${task.title}» на этапы`)}>Разбить</button></div></div>)}</div>;
   }
-  const inbox = (review.inbox as unknown[] || []).length;
+  const inbox = (review.inbox as Array<{ id: string; text: string }> || []);
   const overdue = (review.overdue as unknown[] || []).length;
   const stale = (review.stale_projects as Array<{ id: string; title: string }> || []);
   const goals = (review.goals_without_next_action as Array<{ id: string; title: string }> || []);
-  return <div className="reviewContent"><p><b>Входящие:</b> {inbox}. <b>Просрочено:</b> {overdue}. <b>Застоявшихся проектов:</b> {stale.length}. <b>Целей без следующего шага:</b> {goals.length}.</p>{stale.slice(0,5).map((item) => <p key={item.id}>Проект без движения: <b>{item.title}</b></p>)}{goals.slice(0,5).map((item) => <p key={item.id}>Нужен следующий шаг для цели: <b>{item.title}</b></p>)}</div>;
+  return <div className="reviewContent">
+    <p><b>Входящие:</b> {inbox.length}. <b>Просрочено:</b> {overdue}. <b>Застоявшихся проектов:</b> {stale.length}. <b>Целей без следующего шага:</b> {goals.length}.</p>
+    {inbox.slice(0,8).map((item) => <div className="reviewTask" key={item.id}><div><b>{item.text}</b><small>входящее</small></div><button className="linkButton" onClick={() => void onInboxAction(item.id)}>Разобрано</button></div>)}
+    {stale.slice(0,5).map((item) => <p key={item.id}>Проект без движения: <b>{item.title}</b></p>)}
+    {goals.slice(0,5).map((item) => <p key={item.id}>Нужен следующий шаг для цели: <b>{item.title}</b></p>)}
+  </div>;
 }
