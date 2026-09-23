@@ -205,7 +205,12 @@ export default function Home() {
 
   useEffect(() => {
     try { setVoiceReplies(window.localStorage.getItem("glasha_voice_replies") === "1"); } catch { /* localStorage may be unavailable */ }
-    return () => { if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel(); };
+    return () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+      mediaRecorderRef.current = null;
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    };
   }, []);
 
   function stopSpeaking() {
@@ -703,6 +708,9 @@ export default function Home() {
   async function signOut() {
     if (!supabase) return;
     stopSpeaking();
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
     await supabase.auth.signOut();
     setUserId(null);
     setAuthState("signed_out");
