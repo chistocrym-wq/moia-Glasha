@@ -470,6 +470,7 @@ export default function Home() {
         goalTitle: goal?.title || undefined,
         parentTaskId: row.parent_task_id || undefined,
         isProject: Boolean(row.is_project),
+        completedAt: row.completed_at || undefined,
       };
     }));
   }
