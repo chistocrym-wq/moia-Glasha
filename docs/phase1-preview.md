@@ -11,6 +11,10 @@ This branch is preview-only.
 - Controller then checks UI/E2E in the deploy preview.
 - Only after explicit Controller PASS can promotion to production be a separate action.
 
+## Existing Supabase test decision
+
+Controller approved using the existing `moia-glasha` Supabase project for Phase 1 acceptance and Preview E2E. Rollback-only acceptance suites must remain transactional; no separate preview Supabase project is required for this run.
+
 ## Isolation blocker
 
 Supabase database branching is unavailable on the current Free plan. Do not point a Phase 1 live E2E at production just to bypass this. A separate preview/test Supabase project is the safe fallback.
