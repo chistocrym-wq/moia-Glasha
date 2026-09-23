@@ -24,6 +24,9 @@ const cases = [
   ["Верни задачу Подать документы в дела", "restore_task"],
   ["Покажи мои достижения", "query_achievements"],
   ["Что я сделала за последние 14 дней?", "query_achievements"],
+  ["Набери Кайрата", "contact_action"],
+  ["Покажи номер Кайрата", "contact_action"],
+  ["Открой контакт бухгалтер", "contact_action"],
 ] as const;
 
 for (const [text, expected] of cases) {
@@ -92,3 +95,19 @@ if (completed?.kind === "complete_task") assert.equal(completed.taskQuery, "По
 const restored = deterministicRoute("Верни задачу Подать документы в дела");
 assert.equal(restored?.kind, "restore_task");
 if (restored?.kind === "restore_task") assert.equal(restored.taskQuery, "Подать документы");
+
+
+const dialContact = deterministicRoute("Набери Кайрата");
+assert.equal(dialContact?.kind, "contact_action");
+if (dialContact?.kind === "contact_action") {
+  assert.equal(dialContact.method, "call");
+  assert.equal(dialContact.contactName, "Кайрата");
+}
+
+const showContact = deterministicRoute("Покажи номер Кайрата");
+assert.equal(showContact?.kind, "contact_action");
+if (showContact?.kind === "contact_action") assert.equal(showContact.method, "show_phone");
+
+const openContact = deterministicRoute("Открой контакт бухгалтер");
+assert.equal(openContact?.kind, "contact_action");
+if (openContact?.kind === "contact_action") assert.equal(openContact.method, "show_phone");
