@@ -18,6 +18,9 @@ type NotificationItem = {
   priority: "normal" | "urgent";
   state: "unread" | "seen" | "snoozed";
   bucket: "urgent" | "today" | "later";
+  category?: string;
+  linked_entity_type?: string | null;
+  linked_entity_id?: string | null;
 };
 
 type SearchItem = { entity_type: string; id: string; title: string; subtitle?: string };
@@ -39,10 +42,12 @@ export default function LifeOsHome({
   liveData,
   refreshToken,
   onCommand,
+  onOpenSection,
 }: {
   liveData: boolean;
   refreshToken?: string;
   onCommand: (text: string, source?: "text" | "voice") => void;
+  onOpenSection: (section: "tasks" | "work" | "calendar" | "finance" | "health" | "goals" | "travel" | "documents" | "contacts" | "chat") => void;
 }) {
   const [now, setNow] = useState<NowData | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -165,6 +170,15 @@ export default function LifeOsHome({
     }
   }
 
+  function openLinkedEntity(item: NotificationItem) {
+    const section = ({
+      task: "tasks", project: "tasks", goal: "goals", event: "calendar", health_event: "health",
+      expense: "finance", purchase: "finance", document: "documents", contact: "contacts",
+      trip: "travel", journal: "chat", memory: "chat",
+    } as const)[String(item.linked_entity_type || "") as "task"];
+    if (section) onOpenSection(section);
+  }
+
   async function loadReview(kind: "morning" | "evening" | "weekly") {
     if (!liveData) return;
     setReviewBusy(true);
@@ -269,7 +283,7 @@ export default function LifeOsHome({
         <div className="panelHeader"><div><p className="eyebrow">Центр уведомлений</p><h3>Urgent · Today · Later</h3></div></div>
         {(["urgent","today","later"] as const).map((bucket) => grouped[bucket].length > 0 && <div className="notificationGroup" key={bucket}>
           <b>{bucket === "urgent" ? "Срочно" : bucket === "today" ? "Сегодня" : "Позже"}</b>
-          {grouped[bucket].map((item) => <div className="notificationCard" key={item.id}><div><strong>{item.title}</strong><small>{when(item.deliver_at)}</small></div><div className="rowActions">{item.state === "unread" && <button onClick={() => void notificationAction(item.id,"seen")}>Просмотрено</button>}<button onClick={() => void notificationAction(item.id,"snooze")}>+1ч</button><button onClick={() => void notificationAction(item.id,"skip")}>Пропустить</button><button onClick={() => void notificationAction(item.id,"done")}>Готово</button></div></div>)}
+          {grouped[bucket].map((item) => <div className="notificationCard" key={item.id}><div><strong>{item.title}</strong><small>{when(item.deliver_at)}</small></div><div className="rowActions">{item.linked_entity_type && item.linked_entity_id && <button onClick={() => openLinkedEntity(item)}>Открыть</button>}{item.state === "unread" && <button onClick={() => void notificationAction(item.id,"seen")}>Просмотрено</button>}<button onClick={() => void notificationAction(item.id,"snooze")}>+1ч</button><button onClick={() => void notificationAction(item.id,"skip")}>Пропустить</button><button onClick={() => void notificationAction(item.id,"done")}>Готово</button></div></div>)}
         </div>)}
         {!notifications.length && <p className="muted">Активных уведомлений нет.</p>}
       </section>
@@ -312,10 +326,12 @@ function ReviewView({
   const overdue = (review.overdue as unknown[] || []).length;
   const stale = (review.stale_projects as Array<{ id: string; title: string }> || []);
   const goals = (review.goals_without_next_action as Array<{ id: string; title: string }> || []);
+  const oldTasks = (review.old_tasks as Array<{ id: string; title: string }> || []);
   return <div className="reviewContent">
-    <p><b>Входящие:</b> {inbox.length}. <b>Просрочено:</b> {overdue}. <b>Застоявшихся проектов:</b> {stale.length}. <b>Целей без следующего шага:</b> {goals.length}.</p>
+    <p><b>Входящие:</b> {inbox.length}. <b>Просрочено:</b> {overdue}. <b>Застоявшихся проектов:</b> {stale.length}. <b>Целей без следующего шага:</b> {goals.length}. <b>Старых задач:</b> {oldTasks.length}.</p>
     {inbox.slice(0,8).map((item) => <div className="reviewTask" key={item.id}><div><b>{item.text}</b><small>входящее</small></div><button className="linkButton" onClick={() => void onInboxAction(item.id)}>Разобрано</button></div>)}
     {stale.slice(0,5).map((item) => <p key={item.id}>Проект без движения: <b>{item.title}</b></p>)}
     {goals.slice(0,5).map((item) => <p key={item.id}>Нужен следующий шаг для цели: <b>{item.title}</b></p>)}
+    {oldTasks.slice(0,5).map((item) => <p key={item.id}>Давно в списке: <b>{item.title}</b></p>)}
   </div>;
 }
