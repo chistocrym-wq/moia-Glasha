@@ -13,6 +13,10 @@ const cases = [
   ["Могу я завтра в 15:00 записаться к врачу?", "check_availability"],
   ["Разбери мою неделю и предложи стратегию подготовки к B1", "advice"],
   ["Найди билеты Москва — Петербург завтра", "search_tickets"],
+  ["Перенеси задачу про договор в работу", "move_task"],
+  ["Это личное, а не рабочее", "move_task"],
+  ["Разбей задачу Подготовить презентацию на этапы", "split_task"],
+  ["Открой Мой супербанк", "open_service"],
 ] as const;
 
 for (const [text, expected] of cases) {
@@ -36,3 +40,25 @@ if (task?.kind === "create_task") {
 }
 
 console.log(`deterministic-router: ${cases.length} cases PASS`);
+
+
+const move = deterministicRoute("Перенеси задачу про договор в работу");
+assert.equal(move?.kind, "move_task");
+if (move?.kind === "move_task") {
+  assert.equal(move.taskQuery, "договор");
+  assert.equal(move.area, "work");
+}
+
+const correction = deterministicRoute("Это личное, а не рабочее");
+assert.equal(correction?.kind, "move_task");
+if (correction?.kind === "move_task") {
+  assert.equal(correction.taskQuery, null);
+  assert.equal(correction.area, "personal");
+}
+
+const split = deterministicRoute("Разбей задачу Подготовить презентацию на этапы");
+assert.equal(split?.kind, "split_task");
+
+const arbitraryApp = deterministicRoute("Открой Мой супербанк");
+assert.equal(arbitraryApp?.kind, "open_service");
+if (arbitraryApp?.kind === "open_service") assert.equal(arbitraryApp.service, "Мой супербанк");
