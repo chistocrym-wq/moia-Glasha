@@ -607,7 +607,10 @@ export default function Home() {
     const nextStatus = task.done ? "todo" : "done";
     const { error } = await supabase.from("tasks").update({ status: nextStatus, updated_at: new Date().toISOString() }).eq("id", id);
     if (error) setAnswer("Не смогла изменить задачу.");
-    else await loadLiveData();
+    else {
+      setTasks((items) => items.map((item) => item.id === id ? { ...item, done: nextStatus === "done" } : item));
+      setAnswer(nextStatus === "done" ? "Отметила как выполненное." : "Вернула задачу в работу.");
+    }
   }
 
   async function addTask(area: Task["area"] = "Личное") {
@@ -619,18 +622,26 @@ export default function Home() {
     if (!title?.trim()) return;
     const dueDate = window.prompt("Дата YYYY-MM-DD (можно оставить пустой)")?.trim() || null;
     const dueTime = window.prompt("Время HH:MM (можно оставить пустым)")?.trim() || null;
-    const { error } = await supabase.from("tasks").insert({
+    const { data, error } = await supabase.from("tasks").insert({
       user_id: userId,
       area: area === "Работа" ? "work" : "personal",
       title: title.trim(),
       due_date: dueDate,
       due_time: dueTime,
       source: "manual",
-    });
+    }).select("id,title,area,status,due_date,due_time,priority").single();
     if (error) setAnswer("Не смогла сохранить задачу.");
     else {
+      setTasks((items) => [{
+        id: data.id,
+        title: data.title,
+        area: data.area === "work" ? "Работа" : "Личное",
+        done: data.status === "done",
+        dueDate: data.due_date || undefined,
+        time: data.due_time ? String(data.due_time).slice(0, 5) : undefined,
+        priority: data.priority || undefined,
+      }, ...items]);
       setAnswer("Задача сохранена.");
-      await loadLiveData();
     }
   }
 
@@ -649,18 +660,26 @@ export default function Home() {
       ?? categories.find((item) => item.slug === "other")
       ?? null;
     const currency = window.prompt("Валюта", defaultCurrency)?.trim().toUpperCase() || defaultCurrency;
-    const { error } = await supabase.from("expenses").insert({
+    const { data, error } = await supabase.from("expenses").insert({
       user_id: userId,
       category_id: category?.id ?? null,
       amount,
       currency,
       note: title.trim(),
       source: "manual",
-    });
+    }).select("id,amount,currency,occurred_at,note").single();
     if (error) setAnswer("Не смогла сохранить расход.");
     else {
+      setExpenses((items) => [{
+        id: data.id,
+        title: data.note || title.trim(),
+        amount: Number(data.amount) || amount,
+        currency: data.currency || currency,
+        category: category?.name || "Другое",
+        categorySlug: category?.slug,
+        occurredAt: data.occurred_at,
+      }, ...items]);
       setAnswer(`Записала ${formatMoney(amount, currency)} — ${category?.name || "Другое"}.`);
-      await loadLiveData();
     }
   }
 
@@ -673,13 +692,19 @@ export default function Home() {
     if (!title?.trim()) return;
     const kind = window.confirm("Это конкретная цель? Нажми OK для цели, Отмена для мечты.") ? "goal" : "dream";
     const targetDate = window.prompt("Желаемая дата YYYY-MM-DD (можно оставить пустой)")?.trim() || null;
-    const { error } = await supabase.from("goals").insert({
+    const { data, error } = await supabase.from("goals").insert({
       user_id: userId, title: title.trim(), kind, target_date: targetDate,
-    });
+    }).select("id,title,description,kind,target_date").single();
     if (error) setAnswer("Не смогла сохранить цель.");
     else {
+      setGoals((items) => [{
+        id: data.id,
+        title: data.title,
+        description: data.description || undefined,
+        kind: data.kind === "dream" ? "Мечта" : "Цель",
+        targetDate: data.target_date || undefined,
+      }, ...items]);
       setAnswer("Сохранила. В Советчике можно разложить её на ближайшие шаги.");
-      await loadLiveData();
     }
   }
 
@@ -720,18 +745,25 @@ export default function Home() {
     const phone = window.prompt("Телефон (можно оставить пустым)")?.trim() || null;
     const emailValue = window.prompt("Email (можно оставить пустым)")?.trim() || null;
     const telegram = window.prompt("Telegram username (можно оставить пустым)")?.trim().replace(/^@/, "") || null;
-    const { error } = await supabase.from("contacts").insert({
+    const { data, error } = await supabase.from("contacts").insert({
       user_id: userId,
       name: name.trim(),
       relation,
       phone,
       email: emailValue,
       telegram_username: telegram,
-    });
+    }).select("id,name,relation,phone,email,telegram_username").single();
     if (error) setAnswer("Не смогла сохранить контакт. Проверь migration 002.");
     else {
+      setContacts((items) => [{
+        id: data.id,
+        name: data.name,
+        relation: data.relation || undefined,
+        phone: data.phone || undefined,
+        email: data.email || undefined,
+        telegramUsername: data.telegram_username || undefined,
+      }, ...items]);
       setAnswer(`Сохранила контакт «${name.trim()}».`);
-      await loadLiveData();
     }
   }
 
