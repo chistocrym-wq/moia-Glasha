@@ -59,16 +59,23 @@ export default function LifeOsHome({
   const [recurrence, setRecurrence] = useState<"none" | "daily" | "weekly" | "monthly">("none");
   const [reminderCategory, setReminderCategory] = useState<"general" | "payment" | "health">("general");
   const [reminderPriority, setReminderPriority] = useState<"normal" | "urgent">("normal");
+  const [quietEnabled, setQuietEnabled] = useState(false);
+  const [quietStart, setQuietStart] = useState("22:00");
+  const [quietEnd, setQuietEnd] = useState("08:00");
 
   async function refresh() {
     if (!liveData) return;
     try {
-      const [nowResponse, notificationsResponse] = await Promise.all([
+      const [nowResponse, notificationsResponse, preferencesResponse] = await Promise.all([
         jsonFetch("/api/life/now"),
         jsonFetch("/api/life/notifications"),
+        jsonFetch("/api/life/preferences"),
       ]);
       setNow(nowResponse.now);
       setNotifications(notificationsResponse.notifications || []);
+      setQuietEnabled(Boolean(preferencesResponse.preferences?.quiet_hours_enabled));
+      setQuietStart(String(preferencesResponse.preferences?.quiet_hours_start || "22:00").slice(0,5));
+      setQuietEnd(String(preferencesResponse.preferences?.quiet_hours_end || "08:00").slice(0,5));
     } catch (error) {
       console.error("life_os_refresh_failed", error);
       setStatus("Life OS ждёт preview-миграцию 006.");
@@ -107,7 +114,8 @@ export default function LifeOsHome({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: reminderTitle.trim(),
-          due_at: new Date(`${reminderDate}T${reminderTime}:00`).toISOString(),
+          local_date: reminderDate,
+          local_time: reminderTime,
           recurrence,
           category: reminderCategory,
           priority: reminderPriority,
@@ -119,6 +127,27 @@ export default function LifeOsHome({
     } catch (error) {
       console.error("reminder_ui_failed", error);
       setStatus("Не получилось сохранить напоминание.");
+    }
+  }
+
+  async function saveQuietHours() {
+    if (!liveData) return;
+    setStatus("Сохраняю тихие часы…");
+    try {
+      await jsonFetch("/api/life/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quiet_hours_enabled: quietEnabled,
+          quiet_hours_start: quietStart,
+          quiet_hours_end: quietEnd,
+        }),
+      });
+      setStatus(quietEnabled ? `Тихие часы: ${quietStart}–${quietEnd}.` : "Тихие часы выключены.");
+      await refresh();
+    } catch (error) {
+      console.error("quiet_hours_ui_failed", error);
+      setStatus("Не получилось сохранить тихие часы.");
     }
   }
 
@@ -209,6 +238,17 @@ export default function LifeOsHome({
           <label className="priorityToggle"><input type="checkbox" checked={reminderPriority === "urgent"} onChange={(e) => setReminderPriority(e.target.checked ? "urgent" : "normal")} /> Срочно</label>
           <button className="primaryButton" disabled={!liveData}>Сохранить</button>
         </form>
+        <details className="quietHours">
+          <summary>Тихие часы</summary>
+          <div className="quietHoursRow">
+            <label><input type="checkbox" checked={quietEnabled} onChange={(e) => setQuietEnabled(e.target.checked)} /> Включить</label>
+            <input type="time" value={quietStart} onChange={(e) => setQuietStart(e.target.value)} disabled={!quietEnabled}/>
+            <span>—</span>
+            <input type="time" value={quietEnd} onChange={(e) => setQuietEnd(e.target.value)} disabled={!quietEnabled}/>
+            <button type="button" className="linkButton" onClick={() => void saveQuietHours()} disabled={!liveData}>Сохранить</button>
+          </div>
+          <p className="muted">Напоминания, попавшие в этот интервал, откладываются до окончания тихих часов.</p>
+        </details>
       </section>
 
       <section className="panel">
