@@ -1,0 +1,137 @@
+name: Apply uploaded Glasha images
+
+on:
+  push:
+    branches:
+      - prototype/glasha-v1
+    paths:
+      - "ChatGPT Image*.png"
+      - ".github/workflows/apply-glasha-assets.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: prototype/glasha-v1
+          fetch-depth: 0
+
+      - name: Detect uploaded source images
+        id: sources
+        shell: bash
+        run: |
+          AVATAR='ChatGPT Image 21 сент. 2026 г., 22_04_34.png'
+          if [ -f "$AVATAR" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Uploaded Glasha sources have already been processed."
+          fi
+
+      - name: Prepare individual artwork and PWA icons
+        if: steps.sources.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pillow
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageOps
+
+          sources = {
+              "ideas": "ChatGPT Image 21 сент. 2026 г., 20_10_38 (1).png",
+              "home": "ChatGPT Image 21 сент. 2026 г., 20_10_39 (2).png",
+              "quick": "ChatGPT Image 21 сент. 2026 г., 20_10_39 (3).png",
+              "cooking": "ChatGPT Image 21 сент. 2026 г., 20_10_40 (4).png",
+              "cat": "ChatGPT Image 21 сент. 2026 г., 20_10_40 (5).png",
+              "work": "ChatGPT Image 21 сент. 2026 г., 20_10_41 (6).png",
+              "travel": "ChatGPT Image 21 сент. 2026 г., 20_10_41 (7).png",
+              "health": "ChatGPT Image 21 сент. 2026 г., 20_10_41 (8).png",
+              "learning": "ChatGPT Image 21 сент. 2026 г., 20_10_42 (9).png",
+              "documents": "ChatGPT Image 21 сент. 2026 г., 20_10_42 (10).png",
+          }
+          avatar_source = Path("ChatGPT Image 21 сент. 2026 г., 22_04_34.png")
+          out = Path("public/glasha/characters")
+          icons = Path("public/icons")
+          source_archive = Path("assets/source/glasha")
+          out.mkdir(parents=True, exist_ok=True)
+          icons.mkdir(parents=True, exist_ok=True)
+          source_archive.mkdir(parents=True, exist_ok=True)
+
+          for role, filename in sources.items():
+              path = Path(filename)
+              if not path.exists():
+                  raise RuntimeError(f"Missing uploaded image: {filename}")
+              im = Image.open(path).convert("RGBA")
+              if im.width < 600 or im.height < 1000:
+                  raise RuntimeError(f"{filename}: source is unexpectedly small: {im.size}")
+              im.save(out / f"{role}.webp", "WEBP", quality=94, method=6)
+
+          if not avatar_source.exists():
+              raise RuntimeError("Main avatar source is missing")
+
+          avatar_original = Image.open(avatar_source).convert("RGBA")
+          side = min(avatar_original.size)
+          left = max(0, (avatar_original.width - side) // 2)
+          top = max(0, int((avatar_original.height - side) * 0.18))
+          top = min(top, avatar_original.height - side)
+          avatar = avatar_original.crop((left, top, left + side, top + side))
+          avatar = avatar.resize((900, 900), Image.Resampling.LANCZOS)
+          avatar.save("public/glasha/avatar.webp", "WEBP", quality=96, method=6)
+
+          bg = (242, 239, 255, 255)
+          for size, filename, safe in [
+              (192, "icon-192.png", 12),
+              (512, "icon-512.png", 28),
+              (512, "icon-maskable.png", 82),
+              (180, "apple-touch-icon.png", 10),
+          ]:
+              canvas = Image.new("RGBA", (size, size), bg)
+              inner = size - 2 * safe
+              fitted = ImageOps.contain(avatar, (inner, inner), Image.Resampling.LANCZOS)
+              x = (size - fitted.width) // 2
+              y = (size - fitted.height) // 2
+              canvas.alpha_composite(fitted, (x, y))
+              canvas.convert("RGB").save(icons / filename, "PNG", optimize=True)
+
+          for filename in list(sources.values()) + [avatar_source.name]:
+              src = Path(filename)
+              if src.exists():
+                  src.rename(source_archive / src.name)
+          PY
+
+          rm -f public/glasha/glasha-sprite.webp
+          rm -f public/icons/dasha-placeholder.svg public/icons/icon-192.svg public/icons/icon-512.svg public/icons/icon-maskable.svg
+          rm -rf .asset-import .assets
+
+      - name: Verify prepared visual set
+        if: steps.sources.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s public/glasha/avatar.webp
+          for name in home work health learning travel documents quick ideas cat cooking; do
+            test -s "public/glasha/characters/$name.webp"
+          done
+          for icon in icon-192.png icon-512.png icon-maskable.png apple-touch-icon.png; do
+            test -s "public/icons/$icon"
+          done
+          if grep -RqE 'glasha-sprite|glashaCrop|glashaSheet|currentSprite|sprite=' src public/manifest.webmanifest public/sw.js; then
+            echo "Old sprite implementation is still referenced."
+            exit 1
+          fi
+
+      - name: Commit prepared assets
+        if: steps.sources.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: integrate uploaded Glasha artwork and avatar'
+          git push origin HEAD:prototype/glasha-v1
