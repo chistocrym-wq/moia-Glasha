@@ -1,6 +1,5 @@
-const CACHE_VERSION = "glasha-shell-v5";
+const CACHE_VERSION = "glasha-shell-v6";
 const CORE = [
-  "/",
   "/offline.html",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
@@ -60,9 +59,10 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.mode === "navigate") {
+    // Navigation HTML can reflect auth/session state. Never store it in Cache Storage.
     event.respondWith(
       fetch(request).catch(async () => {
-        return (await caches.match("/offline.html")) || (await caches.match("/")) || Response.error();
+        return (await caches.match("/offline.html")) || Response.error();
       })
     );
     return;
