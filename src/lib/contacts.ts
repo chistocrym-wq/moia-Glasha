@@ -79,8 +79,8 @@ function labelFromParams(params: string) {
 }
 
 function stableHash(value: string) {
-  let hash = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
+  let hash = BigInt("14695981039346656037");
+  const prime = BigInt("1099511628211");
   const bytes = new TextEncoder().encode(value);
   for (const byte of bytes) {
     hash ^= BigInt(byte);
