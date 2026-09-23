@@ -80,15 +80,15 @@ function categoryFromText(text: string) {
 }
 
 function serviceFromText(text: string) {
-  const value = lower(text);
-  if (value.includes("tutu") || value.includes("туту")) return "tutu";
-  if (value.includes("telegram") || value.includes("телеграм")) return "telegram";
-  if (value.includes("яндекс карт") || value.includes("карты") || value.includes("карту")) return "maps";
-  if (value.includes("переводчик")) return "translate";
-  if (value.includes("госуслуг")) return "gosuslugi";
-  if (value.includes("почт")) return "mail";
-  if (value.includes("календар")) return "calendar";
-  if (value.includes("банк")) return "bank";
+  const value = lower(tidy(text));
+  if (/^(?:tutu|туту)$/.test(value)) return "tutu";
+  if (/^(?:telegram|телеграм|телеграмм)$/.test(value)) return "telegram";
+  if (/^(?:яндекс\s+карты|карты|карта)$/.test(value)) return "maps";
+  if (/^переводчик$/.test(value)) return "translate";
+  if (/^госуслуги$/.test(value)) return "gosuslugi";
+  if (/^(?:почта|email|e-mail)$/.test(value)) return "mail";
+  if (/^календарь$/.test(value)) return "calendar";
+  if (/^(?:банк|мой\s+банк)$/.test(value)) return "bank";
   return null;
 }
 
@@ -123,8 +123,8 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
   if (!text) return null;
 
   if (/^(?:глаша[,.]?\s*)?(?:открой|открыть)(?:\s|$)/i.test(text)) {
-    const service = serviceFromText(text)
-      || tidy(text.replace(/^(?:глаша[,.]?\s*)?(?:открой|открыть)\s*/i, ""));
+    const requested = tidy(text.replace(/^(?:глаша[,.]?\s*)?(?:открой|открыть)\s*/i, ""));
+    const service = serviceFromText(requested) || requested;
     if (service) return { kind: "open_service", service };
   }
 
