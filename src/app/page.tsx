@@ -1418,6 +1418,54 @@ function DocumentUploadForm({
 }
 
 
+function ConnectionsImportForm({
+  disabled,
+  onImport,
+}: {
+  disabled: boolean;
+  onImport: (raw: string) => Promise<void>;
+}) {
+  const [raw, setRaw] = useState("");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!raw.trim()) {
+      setStatus("Вставь JSON-массив приложений.");
+      return;
+    }
+    setBusy(true);
+    setStatus("Импортирую…");
+    try {
+      await onImport(raw);
+      setStatus("Импорт завершён.");
+      setRaw("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Не удалось импортировать приложения.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <details className="connectionsImport">
+    <summary>Массово добавить приложения</summary>
+    <form onSubmit={submit}>
+      <p className="muted">JSON-массив. Обязательные поля: service и display_name. Остальные можно добавлять по мере необходимости.</p>
+      <textarea
+        value={raw}
+        onChange={(e) => setRaw(e.target.value)}
+        disabled={disabled || busy}
+        placeholder={'[{"service":"my_bank","display_name":"Мой банк","platform":"android","deep_link":"mybank://","web_fallback_url":"https://bank.example","capability":"OPEN_ONLY","enabled":true,"aliases":["банк"]}]'}
+      />
+      <div className="rowActions">
+        <button className="primaryButton" type="submit" disabled={disabled || busy}>{busy ? "Импортирую…" : "Импортировать JSON"}</button>
+        {status && <span className="muted">{status}</span>}
+      </div>
+    </form>
+  </details>;
+}
+
 function SectionContent({
   active, currentImage, tasks, events, expenses, notes, goals, healthEvents, categories, documents, contacts, connections, liveData, totalText,
   advisorQuestion, advisorAnswer, advisorBusy, onAdvisorQuestion, onSubmitAdvisor,
@@ -1508,17 +1556,50 @@ function SectionContent({
     else await navigator.clipboard.writeText(planText);
   }
 
+  function taskChildren(parentId: string) {
+    return tasks.filter((task) => task.parentTaskId === parentId);
+  }
+
+  function renderTaskTree(task: Task, depth = 0): React.ReactNode {
+    const children = taskChildren(task.id);
+    const completed = children.filter((child) => child.done).length;
+    const total = children.length;
+    const percent = total ? Math.round((completed / total) * 100) : 0;
+    const showInArea = active === "tasks" || task.area === "Работа";
+
+    if (!showInArea && depth === 0) return null;
+
+    return <div className={depth ? "taskTree nested" : "taskTree"} key={task.id}>
+      <div className={`taskRow taskRowStatic ${task.done ? "done" : ""}`}>
+        <button className="checkButton" onClick={() => onToggleTask(task.id)}><span className="checkCircle">{task.done ? "✓" : ""}</span></button>
+        <span className="taskText">
+          <b>{task.title}{children.length ? <span className="projectBadge">проект</span> : null}</b>
+          <small>{task.area}{task.dueDate ? ` · ${task.dueDate}` : ""}{task.time ? ` · ${task.time}` : ""}{task.priority ? ` · ${task.priority}` : ""}{task.goalTitle ? ` · цель: ${task.goalTitle}` : ""}</small>
+          {total > 0 && <span className="projectProgress">
+            <span><i style={{ width: `${percent}%` }} /></span>
+            <small>{completed}/{total} · {percent}%</small>
+          </span>}
+        </span>
+        <div className="taskActions">
+          <button className="miniTaskButton" onClick={() => onMoveTask(task.id, task.area === "Работа" ? "Личное" : "Работа")}>→ {task.area === "Работа" ? "Личное" : "Работа"}</button>
+          {!children.length && <button className="miniTaskButton" onClick={() => onSplitTask(task.id)}>Разбить на шаги</button>}
+          <button className="miniTaskButton" onClick={() => onAddSubtask(task.id)}>+ Подзадача</button>
+          <button className="attachButton" onClick={() => onAttachTask(task.id)} title="Прикрепить документ">📎</button>
+        </div>
+      </div>
+      {children.length > 0 && <div className="taskChildren">{children.map((child) => renderTaskTree(child, depth + 1))}</div>}
+    </div>;
+  }
+
   return <div className="sectionLayout">
     <section className="sectionLead"><div><Chip>{sections.find(s=>s.id===active)?.label}</Chip><h2>{headline(active)}</h2><p>{description(active)}</p></div><div className="sectionGlasha"><GlashaCharacter image={currentImage} className="sectionCharacter" alt={`Глаша — ${sections.find(s=>s.id===active)?.label ?? "раздел"}`} /></div></section>
 
     {(active === "tasks" || active === "work") && <section className="panel">
       <div className="panelHeader"><div><p className="eyebrow">{active === "work" ? "Работа" : "Личное + работа"}</p><h3>{active === "work" ? "Текущие задачи" : "Все дела"}</h3></div><button className="primaryButton" onClick={() => onAddTask(active === "work" ? "Работа" : "Личное")}>+ Добавить</button></div>
-      <div className="taskList">{tasks.filter(t => active === "tasks" || t.area === "Работа").map(t =>
-        <div key={t.id} className={`taskRow taskRowStatic ${t.done ? "done" : ""}`}>
-          <button className="checkButton" onClick={() => onToggleTask(t.id)}><span className="checkCircle">{t.done ? "✓" : ""}</span></button>
-          <span className="taskText"><b>{t.title}</b><small>{t.area}{t.dueDate ? ` · ${t.dueDate}` : ""}{t.time ? ` · ${t.time}` : ""}{t.goalTitle ? ` · цель: ${t.goalTitle}` : ""}</small></span>
-          <button className="attachButton" onClick={() => onAttachTask(t.id)} title="Прикрепить документ">📎</button>
-        </div>)}</div>
+      <div className="taskList">
+        {tasks.filter((task) => !task.parentTaskId).map((task) => renderTaskTree(task))}
+        {active === "work" && tasks.filter((task) => task.parentTaskId && task.area === "Работа" && tasks.find((parent) => parent.id === task.parentTaskId)?.area !== "Работа").map((task) => renderTaskTree(task))}
+      </div>
       {!liveData && <p className="demoNote">Демо-данные. После входа здесь будут реальные задачи и вложения.</p>}
     </section>}
 
@@ -1592,9 +1673,19 @@ function SectionContent({
     </section>}
 
     {active === "connections" && <section className="panel">
-      <div className="panelHeader"><div><p className="eyebrow">Внешние сервисы</p><h3>Реальные возможности</h3></div></div>
-      <p className="muted">OPEN_ONLY означает только открытие приложения/сайта. Это не доступ к аккаунту и не подключённая интеграция.</p>
-      {connections.length ? connections.map(item => <div className="connectionRow" key={item.id}><div><b>{item.displayName}</b><small>{item.service}</small></div><span className={`capabilityBadge ${item.capability.toLowerCase()}`}>{item.capability}</span>{(item.deepLink || item.openUrl) && <button className="linkButton" onClick={() => onCommand(`Открой ${item.displayName}`)}>Открыть</button>}</div>) : <p className="muted">Нужна migration 002, чтобы создать список подключений.</p>}
+      <div className="panelHeader"><div><p className="eyebrow">Phone App Hub</p><h3>Приложения и реальные возможности</h3></div></div>
+      <p className="muted">OPEN_ONLY означает только запуск native/web-приложения. Это не доступ к аккаунту и не подключённая интеграция.</p>
+      {connections.length ? connections.map(item => <div className={`connectionRow ${item.enabled ? "" : "connectionHidden"}`} key={item.id}>
+        <span className="connectionIcon">{item.icon || "◉"}</span>
+        <div><b>{item.displayName}</b><small>{item.service} · {item.platform}{item.aliases.length ? ` · алиасы: ${item.aliases.join(", ")}` : ""}</small></div>
+        <span className={`capabilityBadge ${item.capability.toLowerCase()}`}>{item.capability}</span>
+        <div className="rowActions">
+          {item.enabled && (item.deepLink || item.urlScheme || item.universalLink || item.webFallbackUrl || item.openUrl) && <button className="linkButton" onClick={() => onOpenConnection(item.id)}>Открыть</button>}
+          <button className="linkButton" onClick={() => onRenameConnection(item.id)}>Переименовать</button>
+          <button className="linkButton" onClick={() => onToggleConnection(item.id, !item.enabled)}>{item.enabled ? "Скрыть" : "Показать"}</button>
+        </div>
+      </div>) : <p className="muted">Каталог приложений пока пуст.</p>}
+      <ConnectionsImportForm disabled={!liveData} onImport={onImportConnections} />
     </section>}
 
     {active === "quick" && <div className="quickGrid"><InstallGlashaTile />{[["🏦","Банк"],["▣","Госуслуги"],["✉","Почта"],["◫","Календарь"],["✈","Tutu"],["⌖","Карты"],["文","Переводчик"],["💬","Telegram"]].map(([i,n]) => <button className="quickTile" key={n} onClick={() => onCommand(`Открой ${n}`)}><span>{i}</span><b>{n}</b></button>)}</div>}
