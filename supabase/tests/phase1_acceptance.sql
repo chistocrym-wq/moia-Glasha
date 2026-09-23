@@ -61,7 +61,9 @@ begin
   if n <> 1 then raise exception 'phase1 own reminder failed'; end if;
   select count(*) into n from public.notifications where title='__phase1_rls_notification_a__';
   if n <> 1 then raise exception 'phase1 own notification failed'; end if;
-end $$;
+  select count(*) into n from public.glasha_global_search('__phase1_rls_task_a__');
+  if n <> 1 then raise exception 'phase1 global search failed for owner'; end if;
+end $;
 
 -- User B must not see A's rows.
 select set_config('request.jwt.claim.sub',(select b::text from phase1_test_ids),true);
@@ -75,7 +77,9 @@ begin
   if n <> 0 then raise exception 'phase1 RLS leak: reminders'; end if;
   select count(*) into n from public.notifications where title='__phase1_rls_notification_a__';
   if n <> 0 then raise exception 'phase1 RLS leak: notifications'; end if;
-end $$;
+  select count(*) into n from public.glasha_global_search('__phase1_rls_task_a__');
+  if n <> 0 then raise exception 'phase1 RLS leak: global search RPC'; end if;
+end $;
 
 -- Cross-user relation/notification references must be rejected even if UUIDs are known.
 do $$
