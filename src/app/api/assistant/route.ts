@@ -25,6 +25,9 @@ type Action =
   | "contact_action"
   | "search_tickets"
   | "move_task"
+  | "complete_task"
+  | "restore_task"
+  | "query_achievements"
   | "split_task"
   | "advice";
 
@@ -741,31 +744,131 @@ async function moveTask(rt: Runtime, taskQuery: string | null, area: "personal" 
   }
 
   const { data, error } = await tracked(rt,
-    rt.supabase.from("tasks")
-      .update({ area, updated_at: new Date().toISOString() })
-      .eq("user_id", rt.userId)
-      .eq("id", before.id)
-      .select("id,title,area,due_date,due_time,reminder_at,priority,status,goal_id,parent_task_id,is_project")
-      .single()
+    rt.supabase.rpc("glasha_move_task_area", {
+      p_task_id: before.id,
+      p_area: area,
+      p_move_children: true,
+    })
   );
   if (error) throw error;
 
+  const rows = (data ?? []) as Array<{ id: string; title: string; area: string; status: string; parent_task_id: string | null; is_project: boolean }>;
   return {
-    data: [{
-      ...data,
+    data: rows.map((row) => ({
+      ...row,
       previous_area: before.area,
-      preserved: {
-        id: data.id === before.id,
-        due_date: data.due_date === before.due_date,
-        due_time: String(data.due_time || "") === String(before.due_time || ""),
-        reminder_at: data.reminder_at === before.reminder_at,
-        priority: data.priority === before.priority,
-        status: data.status === before.status,
-        goal_id: data.goal_id === before.goal_id,
-        parent_task_id: data.parent_task_id === before.parent_task_id,
-      },
-    }],
-    reply: `Переместила «${before.title}» в «${area === "work" ? "Работа" : "Личное"}». Задача осталась той же, без дубля.`,
+      preserved_id: row.id === before.id || Boolean(row.parent_task_id),
+    })),
+    reply: rows.length > 1
+      ? `Переместила «${before.title}» и ${rows.length - 1} подзадач в «${area === "work" ? "Работа" : "Личное"}». ID и связи сохранены.`
+      : `Переместила «${before.title}» в «${area === "work" ? "Работа" : "Личное"}». Задача осталась той же, без дубля.`,
+  };
+}
+
+async function completeTask(rt: Runtime, taskQuery: string) {
+  const resolved = await resolveTaskForAction(rt, taskQuery);
+  if (!resolved.task) return { needs_clarification: true, reply: resolved.clarification || "Какую задачу отметить выполненной?" };
+  const task = resolved.task;
+
+  const { data: children, error: childrenError } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .select("id,title,status")
+      .eq("user_id", rt.userId)
+      .eq("parent_task_id", task.id)
+      .neq("status", "cancelled")
+      .order("sort_order")
+  );
+  if (childrenError) throw childrenError;
+
+  if ((children ?? []).some((child) => child.status !== "done")) {
+    const done = (children ?? []).filter((child) => child.status === "done").length;
+    return {
+      needs_clarification: false,
+      data: children,
+      reply: `«${task.title}» — проект. Сначала заверши подзадачи: выполнено ${done} из ${children?.length || 0}.`,
+    };
+  }
+
+  if (task.status === "done") {
+    return { data: [{ ...task }], reply: `«${task.title}» уже выполнена.` };
+  }
+
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .update({ status: "done", updated_at: new Date().toISOString() })
+      .eq("user_id", rt.userId)
+      .eq("id", task.id)
+      .select("id,title,area,status,completed_at,parent_task_id,is_project")
+      .single()
+  );
+  if (error) throw error;
+  return { data: [data], reply: `Задача выполнена: «${task.title}».` };
+}
+
+async function restoreTask(rt: Runtime, taskQuery: string) {
+  const resolved = await resolveTaskForAction(rt, taskQuery);
+  if (!resolved.task) return { needs_clarification: true, reply: resolved.clarification || "Какую задачу вернуть в дела?" };
+  const task = resolved.task;
+  const nextStatus = task.is_project ? "doing" : "todo";
+
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .eq("user_id", rt.userId)
+      .eq("id", task.id)
+      .select("id,title,area,status,completed_at,parent_task_id,is_project")
+      .single()
+  );
+  if (error) throw error;
+  return {
+    data: [{ ...data, preserved_id: data.id === task.id }],
+    reply: `Вернула «${task.title}» в дела без создания новой задачи.`,
+  };
+}
+
+async function queryAchievements(rt: Runtime) {
+  const since = new Date(Date.now() - 14 * 24 * 60 * 60_000).toISOString();
+  const { data: parents, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .select("id,title,area,status,completed_at,is_project")
+      .eq("user_id", rt.userId)
+      .is("parent_task_id", null)
+      .eq("status", "done")
+      .gte("completed_at", since)
+      .order("completed_at", { ascending: false })
+      .limit(100)
+  );
+  if (error) throw error;
+
+  const ids = (parents ?? []).map((item) => item.id);
+  let children: Array<{ id: string; title: string; status: string; parent_task_id: string | null; completed_at: string | null }> = [];
+  if (ids.length) {
+    const childRes = await tracked(rt,
+      rt.supabase.from("tasks")
+        .select("id,title,status,parent_task_id,completed_at")
+        .eq("user_id", rt.userId)
+        .in("parent_task_id", ids)
+        .order("sort_order")
+    );
+    if (childRes.error) throw childRes.error;
+    children = childRes.data ?? [];
+  }
+
+  const data = (parents ?? []).map((parent) => {
+    const nested = children.filter((child) => child.parent_task_id === parent.id);
+    const completed = nested.filter((child) => child.status === "done").length;
+    return {
+      ...parent,
+      completed_subtasks: completed,
+      total_subtasks: nested.length,
+      progress_percent: nested.length ? Math.round((completed / nested.length) * 100) : 100,
+      children: nested,
+    };
+  });
+
+  return {
+    data,
+    reply: data.length ? `За последние 14 дней выполнено крупных задач: ${data.length}.` : "За последние 14 дней завершённых крупных задач пока нет.",
   };
 }
 
@@ -1134,6 +1237,9 @@ async function executeDeterministic(rt: Runtime, route: DeterministicRoute, rawT
   if (route.kind === "global_search") return globalSearchFast(rt, route.query);
   if (route.kind === "create_reminder") return createReminderFast(rt, route);
   if (route.kind === "move_task") return moveTask(rt, route.taskQuery, route.area);
+  if (route.kind === "complete_task") return completeTask(rt, route.taskQuery);
+  if (route.kind === "restore_task") return restoreTask(rt, route.taskQuery);
+  if (route.kind === "query_achievements") return queryAchievements(rt);
   if (route.kind === "split_task") return splitTask(rt, route.taskQuery);
 
   if (route.kind === "create_expense") return createExpense(rt, {
