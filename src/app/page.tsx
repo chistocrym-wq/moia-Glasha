@@ -351,7 +351,6 @@ export default function Home() {
         parentTaskId: row.parent_task_id || undefined,
         isProject: Boolean(row.is_project),
         completedAt: row.completed_at || undefined,
-        completedAt: row.completed_at || undefined,
       };
     }));
 
