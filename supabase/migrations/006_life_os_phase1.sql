@@ -7,6 +7,26 @@ alter table public.tasks
 create index if not exists tasks_user_completed_idx on public.tasks(user_id, completed_at desc)
   where completed_at is not null;
 
+create or replace function public.glasha_task_completed_at()
+returns trigger
+language plpgsql
+set search_path = public
+as $
+begin
+  if new.status = 'done' and (tg_op = 'INSERT' or old.status is distinct from 'done') then
+    new.completed_at := coalesce(new.completed_at, now());
+  elsif new.status is distinct from 'done' then
+    new.completed_at := null;
+  end if;
+  return new;
+end;
+$;
+
+drop trigger if exists glasha_task_completed_at on public.tasks;
+create trigger glasha_task_completed_at
+before insert or update of status on public.tasks
+for each row execute function public.glasha_task_completed_at();
+
 alter table public.profiles
   add column if not exists quiet_hours_enabled boolean not null default false,
   add column if not exists quiet_hours_start time not null default '22:00',
@@ -273,3 +293,4 @@ revoke all on function public.glasha_entity_owned(uuid,text,uuid) from public, a
 revoke all on function public.validate_glasha_entity_link() from public, anon, authenticated;
 revoke all on function public.validate_glasha_reminder_link() from public, anon, authenticated;
 revoke all on function public.validate_glasha_notification_reminder() from public, anon, authenticated;
+revoke all on function public.glasha_task_completed_at() from public, anon, authenticated;
