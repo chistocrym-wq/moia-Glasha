@@ -213,10 +213,16 @@ export default function Home() {
       return true;
     }
 
-    const target = universalUrl || fallbackUrl;
-    if (target) {
-      if (/^https?:/i.test(target)) window.open(target, "_blank", "noopener,noreferrer");
-      else window.location.href = target;
+    if (universalUrl) {
+      const mobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+      if (mobile) window.location.href = universalUrl;
+      else window.open(universalUrl, "_blank", "noopener,noreferrer");
+      return true;
+    }
+
+    if (fallbackUrl) {
+      if (/^https?:/i.test(fallbackUrl)) window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+      else window.location.href = fallbackUrl;
       return true;
     }
     return false;
