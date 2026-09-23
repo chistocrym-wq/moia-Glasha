@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types tests/deterministic-router.test.mts",
+    "test": "node --experimental-strip-types tests/deterministic-router.test.mts && node --experimental-strip-types tests/life-os.test.mts",
     "start": "next start"
   },
   "dependencies": {
