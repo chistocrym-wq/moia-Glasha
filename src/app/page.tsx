@@ -162,6 +162,81 @@ export default function Home() {
   const current = sections.find((item) => item.id === active) ?? sections[0];
   const liveData = authState === "signed_in" && Boolean(userId);
 
+  function normalizeConnectionName(value?: string) {
+    return String(value || "").trim().toLocaleLowerCase("ru-RU");
+  }
+
+  function findConnectionByName(name: string) {
+    const wanted = normalizeConnectionName(name);
+    return connections.find((item) =>
+      normalizeConnectionName(item.service) === wanted ||
+      normalizeConnectionName(item.displayName) === wanted ||
+      normalizeConnectionName(item.displayName).includes(wanted) ||
+      wanted.includes(normalizeConnectionName(item.displayName)) ||
+      item.aliases.some((alias) =>
+        normalizeConnectionName(alias) === wanted ||
+        normalizeConnectionName(alias).includes(wanted) ||
+        wanted.includes(normalizeConnectionName(alias))
+      )
+    );
+  }
+
+  function openConnectionTarget(connection: ConnectionItem) {
+    if (!connection.enabled) {
+      setAnswer(`${connection.displayName} скрыто в «Подключениях».`);
+      return false;
+    }
+
+    const nativeUrl = connection.deepLink || connection.urlScheme;
+    const universalUrl = connection.universalLink;
+    const fallbackUrl = connection.webFallbackUrl || connection.openUrl || universalUrl;
+
+    if (connection.capability === "NOT_CONNECTED" && !nativeUrl && !fallbackUrl) {
+      setAnswer(`${connection.displayName}: интеграция не подключена и ссылка для открытия не настроена.`);
+      return false;
+    }
+
+    if (nativeUrl && !/^https?:/i.test(nativeUrl)) {
+      let leftPage = false;
+      const onVisibility = () => {
+        if (document.hidden) leftPage = true;
+      };
+      const onPageHide = () => { leftPage = true; };
+      document.addEventListener("visibilitychange", onVisibility);
+      window.addEventListener("pagehide", onPageHide, { once: true });
+
+      window.location.href = nativeUrl;
+      window.setTimeout(() => {
+        document.removeEventListener("visibilitychange", onVisibility);
+        if (!leftPage && fallbackUrl) window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+      }, 1400);
+      return true;
+    }
+
+    const target = universalUrl || fallbackUrl;
+    if (target) {
+      if (/^https?:/i.test(target)) window.open(target, "_blank", "noopener,noreferrer");
+      else window.location.href = target;
+      return true;
+    }
+    return false;
+  }
+
+  async function logLocalRoute(intent: string, startedAt: number) {
+    if (!supabase || !userId) return;
+    const { error } = await supabase.from("request_telemetry").insert({
+      user_id: userId,
+      route_type: "LOCAL",
+      intent,
+      latency_ms: Math.max(0, Date.now() - startedAt),
+      openai_calls_count: 0,
+      web_search_used: false,
+      model_used: null,
+      supabase_queries_count: 0,
+    });
+    if (error) console.error("local_telemetry_insert_failed", { code: error.code, message: error.message });
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -531,6 +606,29 @@ export default function Home() {
       setAnswer("Эта команда уже переведена на настоящий backend, но сейчас backend ещё не подключён к твоему аккаунту.");
       return;
     }
+
+    const localStartedAt = Date.now();
+    const localRoute = deterministicRoute(text);
+    if (localRoute?.kind === "open_service") {
+      const connection = findConnectionByName(localRoute.service);
+      setLastResult(null);
+      if (!connection) {
+        setAnswer("Такого приложения в «Подключениях» пока нет.");
+        void logLocalRoute("open_service_not_found", localStartedAt);
+        return;
+      }
+      const opened = openConnectionTarget(connection);
+      setAnswer(
+        connection.capability === "OPEN_ONLY"
+          ? `Открываю ${connection.displayName}. Это только запуск приложения/сайта — аккаунт к Глаше не подключён.`
+          : opened
+            ? `Открываю ${connection.displayName}. Возможность: ${connection.capability}.`
+            : `Для ${connection.displayName} пока нет рабочей ссылки.`
+      );
+      void logLocalRoute("open_service", localStartedAt);
+      return;
+    }
+
     setBusy(true);
     setLastResult(null);
     try {
@@ -538,11 +636,28 @@ export default function Home() {
       setAnswer(result.reply || "Готово.");
       setLastResult(result);
       if (result.action === "open_service" && Array.isArray(result.data)) {
-        const row = result.data[0] as { action_url?: string };
-        if (row?.action_url) {
-          if (/^https?:/i.test(row.action_url)) window.open(row.action_url, "_blank", "noopener,noreferrer");
-          else window.location.href = row.action_url;
-        }
+        const row = result.data[0] as {
+          action_url?: string;
+          native_url?: string;
+          universal_url?: string;
+          fallback_url?: string;
+          title?: string;
+          capability?: ConnectionItem["capability"];
+        };
+        const connection: ConnectionItem = {
+          id: String(row.title || "server-open"),
+          service: String(row.title || ""),
+          displayName: String(row.title || "Приложение"),
+          platform: "cross_platform",
+          deepLink: row.native_url,
+          universalLink: row.universal_url,
+          webFallbackUrl: row.fallback_url,
+          openUrl: row.fallback_url,
+          capability: row.capability || "OPEN_ONLY",
+          enabled: true,
+          aliases: [],
+        };
+        openConnectionTarget(connection);
       }
       if (!result.needs_clarification) await refreshAfterAssistantAction(result.action);
     } catch (error) {
