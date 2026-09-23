@@ -106,14 +106,20 @@ export default function PhonebookImport({
     const { data: auth } = await supabase.auth.getUser();
     if (!auth.user) throw new Error("Нужно войти в Глашу.");
 
-    const { data, error } = await supabase
-      .from("contacts")
-      .select("id,name,phone,email,phone_numbers,emails,aliases,notes,source,source_uid")
-      .eq("user_id", auth.user.id)
-      .limit(5000);
-    if (error) throw error;
-
-    const existing = (data ?? []) as ExistingContact[];
+    const existing: ExistingContact[] = [];
+    const pageSize = 1000;
+    for (let offset = 0; offset < 10000; offset += pageSize) {
+      const { data, error } = await supabase
+        .from("contacts")
+        .select("id,name,phone,email,phone_numbers,emails,aliases,notes,source,source_uid")
+        .eq("user_id", auth.user.id)
+        .order("id")
+        .range(offset, offset + pageSize - 1);
+      if (error) throw error;
+      const page = (data ?? []) as ExistingContact[];
+      existing.push(...page);
+      if (page.length < pageSize) break;
+    }
     const byUid = new Map(existing.filter((row) => row.source_uid).map((row) => [String(row.source_uid), row]));
     const byPhone = new Map<string,ExistingContact>();
     const byEmail = new Map<string,ExistingContact>();
