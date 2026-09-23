@@ -3,10 +3,10 @@
 This branch is preview-only.
 
 - Source branch: `feature/glasha-life-os`.
-- Production branch and production Supabase must not be changed before Controller live E2E.
+- Production branch must not be changed before Controller live E2E. The existing `moia-glasha` Supabase is approved for this Preview acceptance run.
 - Draft PR: #4.
-- Netlify deploy-preview must use a separate preview/test Supabase project before live E2E.
-- Apply the inherited task lifecycle first, then Phase 1 additions on preview/test: `006_task_achievements_lifecycle.sql` → `006_life_os_phase1.sql` → `007_phase1_projects_achievements.sql` → `008_phase1_phonebook_contacts.sql`.
+- Netlify deploy-preview uses the existing `moia-glasha` Supabase by Controller decision for this run.
+- Apply the inherited task lifecycle first, then Phase 1 additions on preview/test: `006_task_achievements_lifecycle.sql` → `006_life_os_phase1.sql` → `007_phase1_projects_achievements.sql` → `008_phase1_phonebook_contacts.sql` → `009_phase1_projects_achievements_hotfix.sql`.
 - Run rollback-only DB suites `supabase/tests/phase1_acceptance.sql` and `supabase/tests/phase1_phonebook_acceptance.sql`.
 - Controller then checks UI/E2E in the deploy preview.
 - Only after explicit Controller PASS can promotion to production be a separate action.
@@ -15,9 +15,9 @@ This branch is preview-only.
 
 Controller approved using the existing `moia-glasha` Supabase project for Phase 1 acceptance and Preview E2E. Rollback-only acceptance suites must remain transactional; no separate preview Supabase project is required for this run.
 
-## Isolation blocker
+## Isolation note
 
-Supabase database branching is unavailable on the current Free plan. Do not point a Phase 1 live E2E at production just to bypass this. A separate preview/test Supabase project is the safe fallback.
+Supabase database branching is unavailable on the current Free plan. For this run, Controller explicitly approved the existing `moia-glasha` project instead of creating a second project. Rollback-only acceptance suites must remain transactional and production code promotion remains a separate decision.
 
 ## Privacy gates
 
