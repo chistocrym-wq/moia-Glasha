@@ -144,6 +144,12 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
     if (taskQuery) return { kind: "restore_task", taskQuery };
   }
 
+  const openContact = text.match(/^(?:глаша[,.]?\s*)?открой\s+контакт\s+(.+)$/i);
+  if (openContact) {
+    const contactName = tidy(openContact[1]);
+    if (contactName) return { kind: "contact_action", contactName, method: "show_phone" };
+  }
+
   if (/^(?:глаша[,.]?\s*)?(?:открой|открыть)(?:\s|$)/i.test(text)) {
     const requested = tidy(text.replace(/^(?:глаша[,.]?\s*)?(?:открой|открыть)\s*/i, ""));
     const service = serviceFromText(requested) || requested;
@@ -185,12 +191,6 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
   ) {
     const query = cleanupDocumentQuery(text);
     return { kind: "find_document", query: query || "документ" };
-  }
-
-  const openContact = text.match(/^(?:глаша[,.]?\s*)?открой\s+контакт\s+(.+)$/i);
-  if (openContact) {
-    const contactName = tidy(openContact[1]);
-    if (contactName) return { kind: "contact_action", contactName, method: "show_phone" };
   }
 
   const showPhone = text.match(/^(?:глаша[,.]?\s*)?покажи\s+(?:номер|телефон)\s+(.+)$/i);
