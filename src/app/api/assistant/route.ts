@@ -563,7 +563,9 @@ async function querySchedule(rt: Runtime, range: "today" | "tomorrow" | "week" |
   let taskQuery = rt.supabase.from("tasks")
     .select("id,title,area,due_date,due_time,status,priority,goal_id")
     .eq("user_id", rt.userId)
+    .is("parent_task_id", null)
     .neq("status", "done")
+    .neq("status", "cancelled")
     .order("due_date", { ascending: true })
     .order("due_time", { ascending: true });
   if (range !== "all") taskQuery = taskQuery.gte("due_date", bounds.start).lte("due_date", bounds.end);
@@ -1198,6 +1200,7 @@ async function queryOverdue(rt: Runtime) {
     rt.supabase.from("tasks")
       .select("id,title,area,due_date,due_time,priority,status,parent_task_id,is_project")
       .eq("user_id", rt.userId)
+      .is("parent_task_id", null)
       .neq("status", "done")
       .neq("status", "cancelled")
       .lt("due_date", today)
