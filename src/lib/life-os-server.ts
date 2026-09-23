@@ -302,65 +302,24 @@ export async function actOnNotification(
 export async function searchLife(db: LifeDb, userId: string, rawQuery: string) {
   const q = normalize(rawQuery);
   if (!q) return [];
-  const pattern = `%${safeLike(q)}%`;
 
-  const [tasks, goals, events, documents, contacts, inbox, memories] = await Promise.all([
-    db.from("tasks").select("id,title,area,status,due_date,is_project").eq("user_id", userId).ilike("title", pattern).limit(12),
-    db.from("goals").select("id,title,kind,status,target_date").eq("user_id", userId).ilike("title", pattern).limit(12),
-    db.from("calendar_events").select("id,title,kind,start_at,area").eq("user_id", userId).ilike("title", pattern).limit(12),
-    db.from("documents").select("id,title,document_type,owner_person,expiry_date").eq("user_id", userId).ilike("title", pattern).limit(12),
-    db.from("contacts").select("id,name,relation,phone,email").eq("user_id", userId).ilike("name", pattern).limit(12),
-    db.from("inbox_entries").select("id,text,created_at,processed").eq("user_id", userId).ilike("text", pattern).limit(12),
-    db.from("memories").select("id,title,kind,happened_at").eq("user_id", userId).or(`title.ilike.${pattern},body.ilike.${pattern}`).limit(12),
-  ]);
+  // One RLS-aware RPC instead of seven table round-trips.
+  const { data, error } = await db.rpc("glasha_global_search", { p_query: rawQuery });
+  if (error) throw error;
 
-  const firstError = [tasks, goals, events, documents, contacts, inbox, memories].find((item) => item.error)?.error;
-  if (firstError) throw firstError;
-
-  return [
-    ...(tasks.data ?? []).map((row) => ({
-      entity_type: row.is_project ? "project" : "task",
-      id: row.id,
-      title: row.title,
-      subtitle: [row.area, row.status, row.due_date].filter(Boolean).join(" · "),
-    })),
-    ...(goals.data ?? []).map((row) => ({
-      entity_type: "goal",
-      id: row.id,
-      title: row.title,
-      subtitle: [row.kind, row.status, row.target_date].filter(Boolean).join(" · "),
-    })),
-    ...(events.data ?? []).map((row) => ({
-      entity_type: "event",
-      id: row.id,
-      title: row.title,
-      subtitle: [row.kind, row.start_at].filter(Boolean).join(" · "),
-    })),
-    ...(documents.data ?? []).map((row) => ({
-      entity_type: "document",
-      id: row.id,
-      title: row.title,
-      subtitle: [row.document_type, row.owner_person, row.expiry_date].filter(Boolean).join(" · "),
-    })),
-    ...(contacts.data ?? []).map((row) => ({
-      entity_type: "contact",
-      id: row.id,
-      title: row.name,
-      subtitle: [row.relation, row.phone, row.email].filter(Boolean).join(" · "),
-    })),
-    ...(inbox.data ?? []).map((row) => ({
-      entity_type: "inbox",
-      id: row.id,
-      title: row.text,
-      subtitle: row.processed ? "обработано" : "входящее",
-    })),
-    ...(memories.data ?? []).map((row) => ({
-      entity_type: row.kind === "journal" ? "journal" : "memory",
-      id: row.id,
-      title: row.title,
-      subtitle: [row.kind, row.happened_at].filter(Boolean).join(" · "),
-    })),
-  ].slice(0, 40);
+  return (data ?? []).map((row: {
+    entity_type: string;
+    id: string;
+    title: string;
+    subtitle: string | null;
+    match_rank: number;
+  }) => ({
+    entity_type: row.entity_type,
+    id: row.id,
+    title: row.title,
+    subtitle: row.subtitle || "",
+    match_rank: row.match_rank,
+  }));
 }
 
 export async function getNow(db: LifeDb, userId: string) {
