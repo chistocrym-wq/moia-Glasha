@@ -759,6 +759,206 @@ export default function Home() {
     }
   }
 
+  async function moveTaskDirect(id: string, targetArea: Task["area"]) {
+    if (!liveData || !supabase || id.startsWith("sample-")) {
+      setAnswer("Перемещение доступно в подключённом личном пространстве.");
+      return;
+    }
+    const task = tasks.find((item) => item.id === id);
+    if (!task || task.area === targetArea) return;
+
+    const { data, error } = await supabase.from("tasks")
+      .update({ area: targetArea === "Работа" ? "work" : "personal", updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("id", id)
+      .select("id,area")
+      .single();
+
+    if (error) {
+      console.error("move_task_failed", { code: error.code, message: error.message, taskId: id });
+      setAnswer("Не получилось переместить задачу.");
+      return;
+    }
+
+    setTasks((items) => items.map((item) => item.id === data.id ? { ...item, area: data.area === "work" ? "Работа" : "Личное" } : item));
+    setAnswer(`Переместила «${task.title}» в «${targetArea}». Остальные данные задачи сохранены.`);
+  }
+
+  async function addSubtask(parentId: string) {
+    if (!liveData || !supabase || !userId) {
+      setAnswer("Подзадачи доступны после входа.");
+      return;
+    }
+    const parent = tasks.find((item) => item.id === parentId);
+    if (!parent) return;
+
+    const title = window.prompt(`Новая подзадача для «${parent.title}»`);
+    if (!title?.trim()) return;
+
+    const { data, error } = await supabase.from("tasks").insert({
+      user_id: userId,
+      parent_task_id: parent.id,
+      area: parent.area === "Работа" ? "work" : "personal",
+      title: title.trim(),
+      priority: "normal",
+      status: "todo",
+      goal_id: parent.goalId || null,
+      source: "manual",
+    }).select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project").single();
+
+    if (error) {
+      console.error("add_subtask_failed", { code: error.code, message: error.message, parentId });
+      setAnswer("Не получилось сохранить подзадачу.");
+      return;
+    }
+
+    const { error: projectError } = await supabase.from("tasks")
+      .update({ is_project: true, updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("id", parent.id);
+    if (projectError) console.error("mark_project_failed", { code: projectError.code, message: projectError.message, parentId });
+
+    setTasks((items) => [
+      ...items.map((item) => item.id === parent.id ? { ...item, isProject: true } : item),
+      {
+        id: data.id,
+        title: data.title,
+        area: data.area === "work" ? "Работа" : "Личное",
+        done: data.status === "done",
+        dueDate: data.due_date || undefined,
+        time: data.due_time ? String(data.due_time).slice(0, 5) : undefined,
+        reminderAt: data.reminder_at || undefined,
+        priority: data.priority || undefined,
+        goalId: data.goal_id || undefined,
+        parentTaskId: data.parent_task_id || undefined,
+        isProject: Boolean(data.is_project),
+      },
+    ]);
+    setAnswer(`Добавила подзадачу «${data.title}».`);
+  }
+
+  async function splitTaskDirect(id: string) {
+    const task = tasks.find((item) => item.id === id);
+    if (!task) return;
+    await processCommand(`Разбей задачу «${task.title}» на этапы`);
+  }
+
+  async function renameConnection(id: string) {
+    if (!supabase || !userId) return;
+    const current = connections.find((item) => item.id === id);
+    if (!current) return;
+    const displayName = window.prompt("Новое название приложения", current.displayName)?.trim();
+    if (!displayName || displayName === current.displayName) return;
+
+    const aliases = Array.from(new Set([...current.aliases, current.displayName]));
+    const { data, error } = await supabase.from("connections")
+      .update({ display_name: displayName, aliases, updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("id", id)
+      .select("id,display_name,aliases")
+      .single();
+    if (error) {
+      console.error("rename_connection_failed", { code: error.code, message: error.message, id });
+      setAnswer("Не получилось переименовать приложение.");
+      return;
+    }
+    setConnections((items) => items.map((item) => item.id === id ? { ...item, displayName: data.display_name, aliases: data.aliases ?? aliases } : item));
+    setAnswer(`Теперь приложение называется «${data.display_name}».`);
+  }
+
+  async function toggleConnection(id: string, enabled: boolean) {
+    if (!supabase || !userId) return;
+    const { error } = await supabase.from("connections")
+      .update({ enabled, updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("id", id);
+    if (error) {
+      console.error("toggle_connection_failed", { code: error.code, message: error.message, id });
+      setAnswer("Не получилось изменить видимость приложения.");
+      return;
+    }
+    setConnections((items) => items.map((item) => item.id === id ? { ...item, enabled } : item));
+  }
+
+  function openConnectionById(id: string) {
+    const connection = connections.find((item) => item.id === id);
+    if (!connection) return;
+    const startedAt = Date.now();
+    openConnectionTarget(connection);
+    void logLocalRoute("open_service_ui", startedAt);
+  }
+
+  async function importConnections(raw: string) {
+    if (!supabase || !userId) throw new Error("auth_required");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("JSON не распознан. Нужен массив приложений.");
+    }
+    if (!Array.isArray(parsed) || !parsed.length) throw new Error("JSON должен содержать непустой массив.");
+
+    const rows = parsed.slice(0, 200).map((item, index) => {
+      if (!item || typeof item !== "object") throw new Error(`Элемент #${index + 1} должен быть объектом.`);
+      const value = item as Record<string, unknown>;
+      const service = String(value.service || "").trim().toLocaleLowerCase("en-US").replace(/[^a-z0-9_-]+/g, "_");
+      const displayName = String(value.display_name || value.displayName || value.service || "").trim();
+      if (!service || !displayName) throw new Error(`У элемента #${index + 1} нужны service и display_name.`);
+      const capability = String(value.capability || "OPEN_ONLY").toUpperCase();
+      if (!["OPEN_ONLY","READ","ACTION","NOT_CONNECTED"].includes(capability)) throw new Error(`Неверный capability у «${displayName}».`);
+      const aliases = Array.isArray(value.aliases) ? value.aliases.map(String).map((x) => x.trim()).filter(Boolean) : [];
+      const webFallbackUrl = String(value.web_fallback_url || value.webFallbackUrl || value.open_url || value.openUrl || "").trim() || null;
+      const deepLink = String(value.deep_link || value.deepLink || "").trim() || null;
+      const urlScheme = String(value.url_scheme || value.urlScheme || "").trim() || null;
+      const universalLink = String(value.universal_link || value.universalLink || "").trim() || null;
+      return {
+        user_id: userId,
+        service,
+        display_name: displayName,
+        platform: String(value.platform || "cross_platform"),
+        open_url: webFallbackUrl,
+        deep_link: deepLink,
+        url_scheme: urlScheme,
+        universal_link: universalLink,
+        web_fallback_url: webFallbackUrl,
+        capability,
+        enabled: value.enabled !== false,
+        icon: value.icon ? String(value.icon) : null,
+        aliases,
+      };
+    });
+
+    const { data, error } = await supabase.from("connections")
+      .upsert(rows, { onConflict: "user_id,service" })
+      .select("id,service,display_name,platform,open_url,deep_link,url_scheme,universal_link,web_fallback_url,capability,enabled,icon,aliases");
+    if (error) {
+      console.error("connections_import_failed", { code: error.code, message: error.message });
+      throw new Error(error.message);
+    }
+
+    const imported = (data ?? []).map((row) => ({
+      id: row.id,
+      service: row.service,
+      displayName: row.display_name,
+      platform: row.platform || "cross_platform",
+      openUrl: row.open_url || undefined,
+      deepLink: row.deep_link || undefined,
+      urlScheme: row.url_scheme || undefined,
+      universalLink: row.universal_link || undefined,
+      webFallbackUrl: row.web_fallback_url || undefined,
+      capability: row.capability as ConnectionItem["capability"],
+      enabled: row.enabled !== false,
+      icon: row.icon || undefined,
+      aliases: row.aliases ?? [],
+    }));
+    setConnections((items) => {
+      const byService = new Map(items.map((item) => [item.service, item]));
+      imported.forEach((item) => byService.set(item.service, item));
+      return Array.from(byService.values()).sort((a, b) => a.displayName.localeCompare(b.displayName, "ru"));
+    });
+    setAnswer(`Импортировано приложений: ${imported.length}.`);
+  }
+
   async function addTask(area: Task["area"] = "Личное") {
     if (!liveData || !supabase || !userId) {
       setAnswer("Ручное добавление уже переведено на Supabase и заработает после подключения аккаунта.");
