@@ -10,7 +10,7 @@ as $function$
   matches as (
     select case when t.is_project then 'project' else 'task' end::text as entity_type,
            t.id,t.title,concat_ws(' · ',t.area,t.status,t.due_date::text)::text as subtitle,
-           case when lower(t.title)=lower(n.q) then 0 when lower(t.title) like lower(n.q)||'%' then 1 else 2 end
+           case when lower(t.title)=lower(n.q) then 0 when lower(t.title) like lower(n.q)||'%' then 1 else 2 end as match_rank
     from public.tasks t cross join needle n
     where t.user_id=(select auth.uid()) and n.q<>'' and t.title ilike '%'||n.q||'%'
 
