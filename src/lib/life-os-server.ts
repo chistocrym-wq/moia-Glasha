@@ -413,7 +413,7 @@ export async function getReview(db: LifeDb, userId: string, kind: "morning" | "e
 
   if (kind === "morning") {
     const [tasks, events, notifications] = await Promise.all([
-      db.from("tasks").select("id,title,area,status,due_date,due_time,priority").eq("user_id", userId).neq("status", "done").lte("due_date", today).order("due_time"),
+      db.from("tasks").select("id,title,area,status,due_date,due_time,priority").eq("user_id", userId).is("parent_task_id", null).neq("status", "done").neq("status", "cancelled").lte("due_date", today).order("due_time"),
       db.from("calendar_events").select("id,title,start_at,end_at,kind,area").eq("user_id", userId).gte("start_at", bounds.start).lte("start_at", bounds.end).order("start_at"),
       listNotifications(db, userId),
     ]);
@@ -440,18 +440,14 @@ export async function getReview(db: LifeDb, userId: string, kind: "morning" | "e
       events: events.data ?? [],
       conflicts: conflictPairs(intervals),
       urgent_notifications: notifications.filter((item) => item.bucket === "urgent" || item.priority === "urgent"),
-      payments_or_reminders: notifications.filter((item) => {
-        const relation = item.reminders as unknown;
-        const reminder = (Array.isArray(relation) ? relation[0] : relation) as { category?: string } | null;
-        return item.bucket === "urgent" || item.bucket === "today";
-      }).slice(0, 5),
+      payments_or_reminders: notifications.filter((item) => (item.bucket === "urgent" || item.bucket === "today") && (item.category === "payment" || item.category === "general")).slice(0, 5),
     };
   }
 
   if (kind === "evening") {
     const [completed, unfinished] = await Promise.all([
-      db.from("tasks").select("id,title,area,status,completed_at").eq("user_id", userId).gte("completed_at", bounds.start).lte("completed_at", bounds.end).order("completed_at", { ascending: false }),
-      db.from("tasks").select("id,title,area,status,due_date,due_time,priority,is_project").eq("user_id", userId).neq("status", "done").neq("status", "cancelled").lte("due_date", today).order("due_date"),
+      db.from("tasks").select("id,title,area,status,completed_at,is_project").eq("user_id", userId).is("parent_task_id", null).gte("completed_at", bounds.start).lte("completed_at", bounds.end).order("completed_at", { ascending: false }),
+      db.from("tasks").select("id,title,area,status,due_date,due_time,priority,is_project").eq("user_id", userId).is("parent_task_id", null).neq("status", "done").neq("status", "cancelled").lte("due_date", today).order("due_date"),
     ]);
     if (completed.error) throw completed.error;
     if (unfinished.error) throw unfinished.error;
