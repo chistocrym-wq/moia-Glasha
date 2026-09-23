@@ -98,8 +98,29 @@ function fingerprint(name: string, phones: ImportedPhone[], emails: ImportedEmai
   }));
 }
 
+function decodeQuotedPrintable(value: string) {
+  const bytes: number[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    if (value[i] === "=" && /^[0-9A-Fa-f]{2}$/.test(value.slice(i + 1, i + 3))) {
+      bytes.push(Number.parseInt(value.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      const encoded = new TextEncoder().encode(value[i]);
+      bytes.push(...encoded);
+    }
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
+  } catch {
+    return value;
+  }
+}
+
 function unfoldVCard(input: string) {
-  const source = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const source = input
+    .replace(/=\r?\n/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
   const lines = source.split("\n");
   const unfolded: string[] = [];
   for (const line of lines) {
@@ -151,21 +172,25 @@ export function parseVCard(input: string): NormalizedImportedContact[] {
       const head = line.slice(0, colon);
       const value = cleanText(line.slice(colon + 1));
       const [rawKey, ...params] = head.split(";");
-      const key = rawKey.toUpperCase();
+      const key = (rawKey.split(".").pop() || rawKey).toUpperCase();
       const paramText = params.join(";");
+      const decodedValue = /ENCODING=QUOTED-PRINTABLE/i.test(paramText)
+        ? decodeQuotedPrintable(value)
+        : value;
 
-      if (key === "FN") name = value;
-      else if (key === "N") fallbackName = displayNameFromN(value);
+      if (key === "FN") name = decodedValue;
+      else if (key === "N") fallbackName = displayNameFromN(decodedValue);
       else if (key === "TEL") {
-        const normalized = normalizePhone(value);
-        if (normalized) phones.push({ label: labelFromParams(paramText), value, normalized });
+        const phoneValue = decodedValue.replace(/^tel:/i, "").trim();
+        const normalized = normalizePhone(phoneValue);
+        if (normalized) phones.push({ label: labelFromParams(paramText), value: phoneValue, normalized });
       } else if (key === "EMAIL") {
-        const email = value.trim();
+        const email = decodedValue.replace(/^mailto:/i, "").trim();
         if (email) emails.push({ label: labelFromParams(paramText), value: email });
       } else if (key === "NICKNAME") {
-        value.split(",").map((item) => cleanText(item)).filter(Boolean).forEach((item) => aliases.add(item));
+        decodedValue.split(",").map((item) => cleanText(item)).filter(Boolean).forEach((item) => aliases.add(item));
       } else if (key === "NOTE") {
-        notes = value || null;
+        notes = decodedValue || null;
       }
     }
 
