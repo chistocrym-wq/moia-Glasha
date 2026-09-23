@@ -42,13 +42,17 @@ export class DocumentUploadError extends Error {
 }
 
 function safeFilename(name: string) {
-  const cleaned = name
-    .normalize("NFKC")
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12) : "";
+  const base = (dot > 0 ? name.slice(0, dot) : name)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[\\/]+/g, "_")
-    .replace(/[^a-zA-Z0-9а-яА-ЯёЁ._()-]+/g, "_")
+    .replace(/[^a-zA-Z0-9._()-]+/g, "_")
     .replace(/^\.+/, "")
-    .slice(-180);
-  return cleaned || "document";
+    .replace(/_+/g, "_")
+    .slice(0, 150) || "document";
+  return ext ? `${base}.${ext}` : base;
 }
 
 function projectRefFromUrl(projectUrl: string) {
@@ -68,6 +72,10 @@ function resumableUpload(
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error || !session?.access_token) {
       reject(new DocumentUploadError("auth_required", "Сессия истекла. Войди в Глашу снова."));
+      return;
+    }
+    if (session.user.id !== storagePath.split("/")[0]) {
+      reject(new DocumentUploadError("user_mismatch", "Сессия не совпадает с владельцем документа."));
       return;
     }
 
@@ -102,13 +110,28 @@ function resumableUpload(
         cacheControl: "3600",
       },
       onError(error) {
-        const detailed = error as Error & { originalResponse?: { getStatus?: () => number } };
+        const detailed = error as Error & {
+          originalResponse?: {
+            getStatus?: () => number;
+            getBody?: () => string;
+          };
+        };
         const status = detailed.originalResponse?.getStatus?.();
+        const responseBody = detailed.originalResponse?.getBody?.();
+        console.error("document_tus_upload_failed", {
+          status: status ?? null,
+          message: detailed.message,
+          responseBody: responseBody || null,
+          storagePath,
+          sizeBytes: file.size,
+        });
         reject(new DocumentUploadError(
           status ? `storage_tus_${status}` : "storage_tus_failed",
           status === 413
             ? "Файл превышает разрешённый размер."
-            : `Не удалось загрузить файл в Storage${status ? ` (HTTP ${status})` : ""}.`,
+            : status === 401 || status === 403
+              ? "Storage отклонил загрузку. Проверь вход в аккаунт и права доступа."
+              : `Не удалось загрузить файл в Storage${status ? ` (HTTP ${status})` : ""}.`,
         ));
       },
       onProgress(bytesUploaded, bytesTotal) {
