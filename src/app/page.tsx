@@ -1275,11 +1275,18 @@ export default function Home() {
         onAdvisorQuestion={setAdvisorQuestion}
         onSubmitAdvisor={submitAdvisor}
         onToggleTask={toggleTask}
+        onMoveTask={moveTaskDirect}
+        onAddSubtask={addSubtask}
+        onSplitTask={splitTaskDirect}
         onAddTask={addTask}
         onAddExpense={addExpense}
         onAddGoal={addGoal}
         onAttachTask={attachToTask}
         onAddContact={addContact}
+        onOpenConnection={openConnectionById}
+        onToggleConnection={toggleConnection}
+        onRenameConnection={renameConnection}
+        onImportConnections={importConnections}
         onSaveDocument={saveDocumentToArchive}
         onOpenDocument={openDocumentFromArchive}
         onCommand={processCommand}
@@ -1414,7 +1421,8 @@ function DocumentUploadForm({
 function SectionContent({
   active, currentImage, tasks, events, expenses, notes, goals, healthEvents, categories, documents, contacts, connections, liveData, totalText,
   advisorQuestion, advisorAnswer, advisorBusy, onAdvisorQuestion, onSubmitAdvisor,
-  onToggleTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact, onSaveDocument, onOpenDocument, onCommand,
+  onToggleTask, onMoveTask, onAddSubtask, onSplitTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact,
+  onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand,
 }: {
   active: SectionId;
   currentImage: GlashaImage;
@@ -1436,11 +1444,18 @@ function SectionContent({
   onAdvisorQuestion: (value: string) => void;
   onSubmitAdvisor: (e: FormEvent) => void;
   onToggleTask: (id: string) => void;
+  onMoveTask: (id: string, area: Task["area"]) => void;
+  onAddSubtask: (parentId: string) => void;
+  onSplitTask: (id: string) => void;
   onAddTask: (area?: Task["area"]) => void;
   onAddExpense: () => void;
   onAddGoal: () => void;
   onAttachTask: (id: string) => void;
   onAddContact: () => void;
+  onOpenConnection: (id: string) => void;
+  onToggleConnection: (id: string, enabled: boolean) => void;
+  onRenameConnection: (id: string) => void;
+  onImportConnections: (raw: string) => Promise<void>;
   onSaveDocument: (file: File, metadata: DocumentUploadMetadata, onProgress?: (percent: number) => void) => Promise<void>;
   onOpenDocument: (id: string) => void;
   onCommand: (text: string, source?: "text" | "voice") => void;
