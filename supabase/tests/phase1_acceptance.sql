@@ -5,6 +5,7 @@ begin;
 
 create temporary table phase1_test_ids(a uuid, b uuid, task_a uuid, goal_a uuid, reminder_a uuid) on commit drop;
 insert into phase1_test_ids(a,b) values (gen_random_uuid(), gen_random_uuid());
+grant select,update on table phase1_test_ids to authenticated;
 
 insert into auth.users(
   id,aud,role,email,encrypted_password,email_confirmed_at,
