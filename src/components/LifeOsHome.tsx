@@ -222,6 +222,21 @@ export default function LifeOsHome({
     }
   }
 
+  function openSearchItem(item: SearchItem) {
+    const section = ({
+      task: "tasks",
+      project: "tasks",
+      goal: "goals",
+      event: "calendar",
+      document: "documents",
+      contact: "contacts",
+      inbox: "chat",
+      memory: "chat",
+      journal: "chat",
+    } as const)[item.entity_type as "task" | "project" | "goal" | "event" | "document" | "contact" | "inbox" | "memory" | "journal"];
+    if (section) onOpenSection(section);
+  }
+
   const grouped = useMemo(() => ({
     urgent: notifications.filter((item) => item.bucket === "urgent"),
     today: notifications.filter((item) => item.bucket === "today"),
@@ -254,7 +269,7 @@ export default function LifeOsHome({
         <button className="primaryButton" disabled={!liveData || searching}>{searching ? "Ищу…" : "Найти"}</button>
       </form>
       {searchResults.length > 0 && <div className="lifeSearchResults">{searchResults.map((item) =>
-        <div className="lifeSearchRow" key={`${item.entity_type}-${item.id}`}><span className="entityType">{item.entity_type}</span><div><b>{item.title}</b>{item.subtitle && <small>{item.subtitle}</small>}</div></div>
+        <button type="button" className="lifeSearchRow" key={`${item.entity_type}-${item.id}`} onClick={() => openSearchItem(item)}><span className="entityType">{item.entity_type}</span><span><b>{item.title}</b>{item.subtitle && <small>{item.subtitle}</small>}</span><span className="searchOpen">Открыть →</span></button>
       )}</div>}
     </section>
     <div className="twoColumns">
@@ -317,9 +332,11 @@ function ReviewView({
 }) {
   if (review.kind === "morning") {
     const tasks = (review.tasks as Array<{ id: string; title: string }> || []);
+    const events = (review.events as Array<{ id: string; title: string }> || []);
     const conflicts = (review.conflicts as Array<{ first: { title: string }; second: { title: string } }> || []);
     const urgent = (review.urgent_notifications as Array<{ id: string; title: string }> || []);
-    return <div className="reviewContent"><p><b>Сегодня:</b> {tasks.length} задач. <b>Срочно:</b> {urgent.length}. <b>Конфликтов:</b> {conflicts.length}.</p>{conflicts.map((pair,index) => <p key={index} className="reviewWarning">Пересекаются: {pair.first.title} ↔ {pair.second.title}</p>)}</div>;
+    const overloaded = tasks.length + events.length >= 8;
+    return <div className="reviewContent"><p><b>Сегодня:</b> {tasks.length} задач и {events.length} событий. <b>Срочно:</b> {urgent.length}. <b>Конфликтов:</b> {conflicts.length}.</p>{overloaded && <p className="reviewWarning">День перегружен: {tasks.length + events.length} пунктов. Стоит снять или перенести часть нагрузки.</p>}{conflicts.map((pair,index) => <p key={index} className="reviewWarning">Пересекаются: {pair.first.title} ↔ {pair.second.title}</p>)}</div>;
   }
   if (review.kind === "evening") {
     const completed = (review.completed as Array<{ id: string; title: string }> || []);
