@@ -157,14 +157,22 @@ export async function listNotifications(db: LifeDb, userId: string) {
 
   const today = localParts(new Date().toISOString(), profile.timezone).date;
   const nowMs = Date.now();
-  return (data ?? []).map((item) => ({
-    ...item,
-    bucket: item.priority === "urgent" || new Date(item.deliver_at).getTime() <= nowMs
-      ? "urgent"
-      : localParts(item.deliver_at, profile.timezone).date === today
-        ? "today"
-        : "later",
-  }));
+  return (data ?? []).map((item) => {
+    const relation = item.reminders as unknown;
+    const reminder = (Array.isArray(relation) ? relation[0] : relation) as { category?: string; recurrence?: string; linked_entity_type?: string | null; linked_entity_id?: string | null } | null;
+    return {
+      ...item,
+      category: reminder?.category || "general",
+      recurrence: reminder?.recurrence || "none",
+      linked_entity_type: reminder?.linked_entity_type || null,
+      linked_entity_id: reminder?.linked_entity_id || null,
+      bucket: item.priority === "urgent" || new Date(item.deliver_at).getTime() <= nowMs
+        ? "urgent"
+        : localParts(item.deliver_at, profile.timezone).date === today
+          ? "today"
+          : "later",
+    };
+  });
 }
 
 export async function createReminder(db: LifeDb, userId: string, input: ReminderInput) {
@@ -335,6 +343,7 @@ export async function getNow(db: LifeDb, userId: string) {
       .eq("user_id", userId)
       .neq("status", "done")
       .neq("status", "cancelled")
+      .is("parent_task_id", null)
       .order("due_date", { ascending: true, nullsFirst: false })
       .limit(40),
     db.from("calendar_events")
@@ -456,14 +465,16 @@ export async function getReview(db: LifeDb, userId: string, kind: "morning" | "e
   }
 
   const staleBefore = new Date(Date.now() - 14 * 24 * 60 * 60_000).toISOString();
-  const [inbox, overdue, projects, goals, goalTasks] = await Promise.all([
+  const oldTaskBefore = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+  const [inbox, overdue, projects, goals, goalTasks, oldTasks] = await Promise.all([
     db.from("inbox_entries").select("id,text,created_at").eq("user_id", userId).eq("processed", false).order("created_at").limit(100),
     db.from("tasks").select("id,title,area,due_date,priority,parent_task_id").eq("user_id", userId).neq("status", "done").neq("status", "cancelled").lt("due_date", today).order("due_date").limit(100),
     db.from("tasks").select("id,title,area,status,updated_at").eq("user_id", userId).eq("is_project", true).neq("status", "done").lt("updated_at", staleBefore).order("updated_at").limit(50),
     db.from("goals").select("id,title,target_date,status").eq("user_id", userId).eq("status", "active").limit(100),
     db.from("tasks").select("id,goal_id,status").eq("user_id", userId).neq("status", "done").neq("status", "cancelled").not("goal_id", "is", null).limit(500),
+    db.from("tasks").select("id,title,area,created_at,due_date,priority").eq("user_id", userId).is("parent_task_id", null).neq("status", "done").neq("status", "cancelled").lt("created_at", oldTaskBefore).order("created_at").limit(100),
   ]);
-  const firstError = [inbox, overdue, projects, goals, goalTasks].find((item) => item.error)?.error;
+  const firstError = [inbox, overdue, projects, goals, goalTasks, oldTasks].find((item) => item.error)?.error;
   if (firstError) throw firstError;
 
   const activeGoalIds = new Set((goalTasks.data ?? []).map((task) => task.goal_id));
@@ -473,6 +484,7 @@ export async function getReview(db: LifeDb, userId: string, kind: "morning" | "e
     overdue: overdue.data ?? [],
     stale_projects: projects.data ?? [],
     goals_without_next_action: (goals.data ?? []).filter((goal) => !activeGoalIds.has(goal.id)),
+    old_tasks: oldTasks.data ?? [],
   };
 }
 
