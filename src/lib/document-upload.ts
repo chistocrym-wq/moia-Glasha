@@ -102,7 +102,8 @@ function resumableUpload(
         cacheControl: "3600",
       },
       onError(error) {
-        const status = error.originalResponse?.getStatus();
+        const detailed = error as Error & { originalResponse?: { getStatus?: () => number } };
+        const status = detailed.originalResponse?.getStatus?.();
         reject(new DocumentUploadError(
           status ? `storage_tus_${status}` : "storage_tus_failed",
           status === 413
