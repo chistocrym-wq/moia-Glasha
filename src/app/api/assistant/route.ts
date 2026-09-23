@@ -146,6 +146,7 @@ type Runtime = {
   contacts?: Contact[];
   goals?: Goal[];
   openai?: OpenAI;
+  source: "text" | "voice";
 };
 
 type CacheEntry<T> = { expiresAt: number; value: T };
@@ -392,7 +393,7 @@ async function createExpense(rt: Runtime, input: { amount: number; note: string;
       currency: input.currency || profile.default_currency,
       note: input.note,
       raw_text: null,
-      source: "text",
+      source: rt.source,
       occurred_at: input.occurredAt || new Date().toISOString(),
       tags: [],
     }).select("id,amount,currency,occurred_at").single()
@@ -449,7 +450,7 @@ async function createTask(rt: Runtime, input: { title: string; area: "personal" 
       due_date: input.dueDate || null,
       due_time: input.dueTime || null,
       goal_id: goalId,
-      source: "text",
+      source: rt.source,
     }).select("id,title,area,due_date,due_time,status,goal_id").single()
   );
   if (error) throw error;
@@ -472,7 +473,7 @@ async function createEvent(rt: Runtime, input: {
       start_at: input.startAt,
       end_at: input.endAt || null,
       all_day: Boolean(input.allDay),
-      source: "text",
+      source: rt.source,
     }).select("id,title,start_at,end_at,kind,area").single()
   );
   if (error) throw error;
@@ -485,7 +486,7 @@ async function createEvent(rt: Runtime, input: {
         occurred_at: input.startAt,
         title: input.title,
         details: {},
-        source: "text",
+        source: rt.source,
       })
     );
     if (healthError) throw healthError;
@@ -503,7 +504,7 @@ async function logHealth(rt: Runtime, input: {
       occurred_at: input.occurredAt,
       title: input.title || null,
       details: {},
-      source: "text",
+      source: rt.source,
     }).select("id,kind,occurred_at,title").single()
   );
   if (error) throw error;
@@ -518,7 +519,7 @@ async function logHealth(rt: Runtime, input: {
         start_at: input.occurredAt,
         end_at: input.endAt || null,
         all_day: Boolean(input.allDay),
-        source: "text",
+        source: rt.source,
       })
     );
     if (eventError) throw eventError;
@@ -815,7 +816,7 @@ async function advise(rt: Runtime, question: string, goalTitle: string | null, e
   return { reply: response.output_text, data: tasks ?? [], model_tier: selection.tier };
 }
 
-async function executeDeterministic(rt: Runtime, route: DeterministicRoute) {
+async function executeDeterministic(rt: Runtime, route: DeterministicRoute, rawText: string) {
   rt.metrics.intent = route.kind;
 
   if (route.kind === "open_service") return openService(rt, route.service);
@@ -883,7 +884,7 @@ async function executeDeterministic(rt: Runtime, route: DeterministicRoute) {
     return searchTickets(rt, { from: route.from, to: route.to, date, afterTime: route.afterTime });
   }
 
-  return advise(rt, "", route.goalTitle, route.explicitDeep);
+  return advise(rt, rawText, route.goalTitle, route.explicitDeep);
 }
 
 async function executeParsed(rt: Runtime, parsed: Parsed, rawText: string) {
@@ -967,7 +968,7 @@ async function executeParsed(rt: Runtime, parsed: Parsed, rawText: string) {
       rt.supabase.from("inbox_entries").insert({
         user_id: rt.userId,
         text: rawText,
-        source: "text",
+        source: rt.source,
         intent: "save_note",
         structured: {},
         processed: false,
@@ -1054,6 +1055,7 @@ export async function POST(request: Request) {
         modelUsed: null,
         supabaseQueries: 0,
       },
+      source: body?.source === "voice" ? "voice" : "text",
     };
 
     const body = await request.json();
@@ -1070,7 +1072,7 @@ export async function POST(request: Request) {
       let result: Record<string, unknown>;
 
       if (fast) {
-        result = await executeDeterministic(rt, fast) as Record<string, unknown>;
+        result = await executeDeterministic(rt, fast, segment) as Record<string, unknown>;
       } else {
         const parsed = await parseWithAi(rt, segment);
         action = parsed.action;
