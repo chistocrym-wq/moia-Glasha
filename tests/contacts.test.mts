@@ -58,3 +58,16 @@ assert.ok(merged.aliases.includes("Алиас"));
 assert.equal(merged.notes, "existing");
 
 console.log("contacts import helpers: PASS");
+
+
+const modernVcf = `BEGIN:VCARD
+VERSION:4.0
+FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=D0=9C=D0=B0=D0=BC=D0=B0
+item1.TEL;TYPE=CELL:tel:+1-202-555-0111
+item2.EMAIL;TYPE=HOME:mailto:mama@example.invalid
+END:VCARD`;
+const modern = parseVCard(modernVcf);
+assert.equal(modern.length, 1);
+assert.equal(modern[0].name, "Мама");
+assert.equal(modern[0].phones[0].normalized, "+12025550111");
+assert.equal(modern[0].emails[0].value, "mama@example.invalid");
