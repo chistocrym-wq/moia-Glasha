@@ -46,6 +46,24 @@ type Task = {
   totalSubtasks?: number;
 };
 
+type RootTaskRow = {
+  id: string;
+  title: string;
+  area: string;
+  status: string;
+  due_date: string | null;
+  due_time: string | null;
+  reminder_at: string | null;
+  priority: string | null;
+  goal_id: string | null;
+  goal_title: string | null;
+  parent_task_id: string | null;
+  is_project: boolean;
+  completed_at: string | null;
+  completed_subtasks: number | string | null;
+  total_subtasks: number | string | null;
+};
+
 type Expense = {
   id: string;
   title: string;
@@ -382,7 +400,7 @@ export default function Home() {
       return;
     }
 
-    setTasks((taskRes.data ?? []).map((row) => ({
+    setTasks((taskRes.data ?? []).map((row: RootTaskRow) => ({
       id: row.id,
       title: row.title,
       area: row.area === "work" ? "Работа" : "Личное",
@@ -502,7 +520,7 @@ export default function Home() {
       console.error("refresh_tasks_failed", error);
       return;
     }
-    setTasks((data ?? []).map((row) => ({
+    setTasks((data ?? []).map((row: RootTaskRow) => ({
       id: row.id,
       title: row.title,
       area: row.area === "work" ? "Работа" : "Личное",
