@@ -11,7 +11,7 @@ create or replace function public.glasha_task_completed_at()
 returns trigger
 language plpgsql
 set search_path = public
-as $
+as $$
 begin
   if new.status = 'done' and (tg_op = 'INSERT' or old.status is distinct from 'done') then
     new.completed_at := coalesce(new.completed_at, now());
@@ -20,7 +20,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists glasha_task_completed_at on public.tasks;
 create trigger glasha_task_completed_at
@@ -172,7 +172,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 begin
   if not exists (
     select 1 from public.reminders r
@@ -182,7 +182,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists validate_glasha_notification_reminder on public.notifications;
 create trigger validate_glasha_notification_reminder
@@ -216,7 +216,7 @@ language sql
 stable
 security invoker
 set search_path = public
-as $
+as $$
   with needle as (
     select trim(coalesce(p_query,'')) as q
   ),
@@ -281,7 +281,7 @@ as $
   from matches
   order by match_rank, lower(title), entity_type
   limit 40;
-$;
+$$;
 
 revoke all on function public.glasha_global_search(text) from public, anon;
 grant execute on function public.glasha_global_search(text) to authenticated;
