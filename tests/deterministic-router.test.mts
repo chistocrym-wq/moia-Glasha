@@ -17,6 +17,9 @@ const cases = [
   ["Это личное, а не рабочее", "move_task"],
   ["Разбей задачу Подготовить презентацию на этапы", "split_task"],
   ["Открой Мой супербанк", "open_service"],
+  ["Напомни завтра в 10 оплатить интернет", "create_reminder"],
+  ["Покажи просроченные", "query_overdue"],
+  ["Найди проект Переезд", "global_search"],
 ] as const;
 
 for (const [text, expected] of cases) {
@@ -62,3 +65,17 @@ assert.equal(split?.kind, "split_task");
 const arbitraryApp = deterministicRoute("Открой Мой супербанк");
 assert.equal(arbitraryApp?.kind, "open_service");
 if (arbitraryApp?.kind === "open_service") assert.equal(arbitraryApp.service, "Мой супербанк");
+
+
+const reminder = deterministicRoute("Напомни завтра в 10 оплатить интернет");
+assert.equal(reminder?.kind, "create_reminder");
+if (reminder?.kind === "create_reminder") {
+  assert.equal(reminder.dateToken, "tomorrow");
+  assert.equal(reminder.time, "10:00");
+  assert.equal(reminder.title.toLocaleLowerCase("ru-RU"), "оплатить интернет");
+  assert.equal(reminder.recurrence, "none");
+}
+
+const recurring = deterministicRoute("Напоминай каждый день в 09:00 пить витамины");
+assert.equal(recurring?.kind, "create_reminder");
+if (recurring?.kind === "create_reminder") assert.equal(recurring.recurrence, "daily");
