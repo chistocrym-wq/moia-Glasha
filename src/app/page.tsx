@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AssistantAvatar, GlashaCharacter, type GlashaImage } from "@/components/GlashaCharacter";
 import { InstallGlashaTile } from "@/components/PwaClient";
 import LifeOsHome from "@/components/LifeOsHome";
+import PhonebookImport from "@/components/PhonebookImport";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { deterministicRoute } from "@/lib/deterministic-router";
 import { speechText } from "@/lib/voice-output";
@@ -61,7 +62,21 @@ type Goal = { id: string; title: string; kind: "Мечта" | "Цель"; target
 type HealthEvent = { id: string; kind: string; occurredAt: string; title?: string };
 type ExpenseCategory = { id: string; name: string; slug: string };
 type DocumentItem = { id: string; title: string; ownerPerson: string; documentType: string; expiryDate?: string; tags: string[]; mimeType?: string; sizeBytes?: number };
-type ContactItem = { id: string; name: string; relation?: string; phone?: string; email?: string; telegramUsername?: string };
+type ContactPhone = { label: string; value: string; normalized: string };
+type ContactEmail = { label: string; value: string };
+type ContactItem = {
+  id: string;
+  name: string;
+  relation?: string;
+  phone?: string;
+  email?: string;
+  telegramUsername?: string;
+  phoneNumbers: ContactPhone[];
+  emails: ContactEmail[];
+  aliases: string[];
+  source?: string;
+  sourceUid?: string;
+};
 type ConnectionItem = {
   id: string;
   service: string;
@@ -357,7 +372,7 @@ export default function Home() {
       supabase.from("expense_categories").select("id,name,slug").eq("user_id", userId).order("sort_order"),
       supabase.from("profiles").select("default_currency").eq("id", userId).maybeSingle(),
       supabase.from("documents").select("id,title,owner_person,document_type,expiry_date,tags,mime_type,size_bytes").eq("user_id", userId).order("created_at", { ascending: false }).limit(100),
-      supabase.from("contacts").select("id,name,relation,phone,email,telegram_username").eq("user_id", userId).order("name").limit(200),
+      supabase.from("contacts").select("id,name,relation,phone,email,telegram_username,phone_numbers,emails,aliases,source,source_uid").eq("user_id", userId).order("name").limit(5000),
       supabase.from("connections").select("id,service,display_name,platform,open_url,deep_link,url_scheme,universal_link,web_fallback_url,capability,enabled,icon,aliases").eq("user_id", userId).order("display_name"),
     ]);
 
@@ -453,6 +468,11 @@ export default function Home() {
       phone: row.phone || undefined,
       email: row.email || undefined,
       telegramUsername: row.telegram_username || undefined,
+      phoneNumbers: Array.isArray(row.phone_numbers) ? row.phone_numbers as ContactPhone[] : [],
+      emails: Array.isArray(row.emails) ? row.emails as ContactEmail[] : [],
+      aliases: row.aliases ?? [],
+      source: row.source || undefined,
+      sourceUid: row.source_uid || undefined,
     })));
     setConnections(connectionRes.error ? [] : (connectionRes.data ?? []).map((row) => ({
       id: row.id,
@@ -1191,7 +1211,11 @@ export default function Home() {
       phone,
       email: emailValue,
       telegram_username: telegram,
-    }).select("id,name,relation,phone,email,telegram_username").single();
+      phone_numbers: phone ? [{ label: "основной", value: phone, normalized: phone.replace(/[^0-9+]/g, "") }] : [],
+      emails: emailValue ? [{ label: "основной", value: emailValue }] : [],
+      aliases: relation ? [relation] : [],
+      source: "manual",
+    }).select("id,name,relation,phone,email,telegram_username,phone_numbers,emails,aliases,source,source_uid").single();
     if (error) setAnswer("Не смогла сохранить контакт. Проверь migration 002.");
     else {
       setContacts((items) => [{
@@ -1201,9 +1225,40 @@ export default function Home() {
         phone: data.phone || undefined,
         email: data.email || undefined,
         telegramUsername: data.telegram_username || undefined,
+        phoneNumbers: Array.isArray(data.phone_numbers) ? data.phone_numbers as ContactPhone[] : [],
+        emails: Array.isArray(data.emails) ? data.emails as ContactEmail[] : [],
+        aliases: data.aliases ?? [],
+        source: data.source || undefined,
+        sourceUid: data.source_uid || undefined,
       }, ...items]);
       setAnswer(`Сохранила контакт «${name.trim()}».`);
     }
+  }
+
+  async function refreshContactsOnly() {
+    if (!supabase || !userId) return;
+    const { data, error } = await supabase.from("contacts")
+      .select("id,name,relation,phone,email,telegram_username,phone_numbers,emails,aliases,source,source_uid")
+      .eq("user_id", userId)
+      .order("name")
+      .limit(5000);
+    if (error) {
+      console.error("refresh_contacts_failed", { code: error.code, message: error.message });
+      return;
+    }
+    setContacts((data ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      relation: row.relation || undefined,
+      phone: row.phone || undefined,
+      email: row.email || undefined,
+      telegramUsername: row.telegram_username || undefined,
+      phoneNumbers: Array.isArray(row.phone_numbers) ? row.phone_numbers as ContactPhone[] : [],
+      emails: Array.isArray(row.emails) ? row.emails as ContactEmail[] : [],
+      aliases: row.aliases ?? [],
+      source: row.source || undefined,
+      sourceUid: row.source_uid || undefined,
+    })));
   }
 
   async function saveDocumentToArchive(
@@ -1365,6 +1420,7 @@ export default function Home() {
         onAddGoal={addGoal}
         onAttachTask={attachToTask}
         onAddContact={addContact}
+        onRefreshContacts={refreshContactsOnly}
         onOpenConnection={openConnectionById}
         onToggleConnection={toggleConnection}
         onRenameConnection={renameConnection}
@@ -1554,7 +1610,7 @@ function ConnectionsImportForm({
 function SectionContent({
   active, currentImage, tasks, events, expenses, notes, goals, healthEvents, categories, documents, contacts, connections, liveData, totalText,
   advisorQuestion, advisorAnswer, advisorBusy, onAdvisorQuestion, onSubmitAdvisor,
-  onToggleTask, onMoveTask, onAddSubtask, onSplitTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact,
+  onToggleTask, onMoveTask, onAddSubtask, onSplitTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact, onRefreshContacts,
   onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand, onRestoreTask, onLoadTaskChildren, onOpenSection,
 }: {
   active: SectionId;
@@ -1585,6 +1641,7 @@ function SectionContent({
   onAddGoal: () => void;
   onAttachTask: (id: string) => void;
   onAddContact: () => void;
+  onRefreshContacts: () => Promise<void>;
   onOpenConnection: (id: string) => void;
   onToggleConnection: (id: string, enabled: boolean) => void;
   onRenameConnection: (id: string) => void;
@@ -1820,9 +1877,14 @@ function SectionContent({
     </section>}
 
     {active === "contacts" && <section className="panel">
-      <div className="panelHeader"><div><p className="eyebrow">Контакты</p><h3>Люди, которым можно позвонить или написать</h3></div><button className="primaryButton" onClick={onAddContact}>+ Контакт</button></div>
-      {contacts.length ? contacts.map(contact => <div className="contactRow" key={contact.id}><div><b>{contact.name}</b><small>{contact.relation || "контакт"}{contact.phone ? ` · ${contact.phone}` : ""}{contact.telegramUsername ? ` · @${contact.telegramUsername}` : ""}</small></div><div className="rowActions">{contact.phone && <a className="linkButton" href={`tel:${contact.phone}`}>Позвонить</a>}{contact.telegramUsername && <a className="linkButton" href={`https://t.me/${contact.telegramUsername.replace(/^@/, "")}`} target="_blank" rel="noreferrer">Telegram</a>}</div></div>) : <p className="muted">Добавь первый контакт, например Кайрата.</p>}
-      <div className="promptStack"><button onClick={() => onCommand("Позвони Кайрату")}>Позвони Кайрату</button><button onClick={() => onCommand("Напиши Кайрату в Telegram")}>Напиши Кайрату в Telegram</button></div>
+      <div className="panelHeader"><div><p className="eyebrow">Контакты</p><h3>Телефонная книга Глаши</h3></div><button className="primaryButton" onClick={onAddContact}>+ Контакт</button></div>
+      <p className="muted">VCF разбирается прямо в браузере. Сырой файл телефонной книги не сохраняется и не отправляется в OpenAI.</p>
+      <PhonebookImport liveData={liveData} onImported={onRefreshContacts} />
+      {contacts.length ? contacts.map(contact => {
+        const phones = contact.phoneNumbers.length ? contact.phoneNumbers : (contact.phone ? [{ label: "основной", value: contact.phone, normalized: contact.phone }] : []);
+        return <div className="contactRow" key={contact.id}><div><b>{contact.name}</b><small>{contact.relation || contact.source || "контакт"}{phones.length ? ` · ${phones.length} тел.` : ""}{contact.aliases.length ? ` · ${contact.aliases.join(", ")}` : ""}{contact.telegramUsername ? ` · @${contact.telegramUsername}` : ""}</small></div><div className="rowActions">{phones.length === 1 && <a className="linkButton" href={`tel:${phones[0].normalized || phones[0].value}`}>Позвонить</a>}{phones.length > 1 && <button className="linkButton" onClick={() => onCommand(`Покажи номер ${contact.name}`)}>Номера</button>}{contact.telegramUsername && <a className="linkButton" href={`https://t.me/${contact.telegramUsername.replace(/^@/, "")}`} target="_blank" rel="noreferrer">Telegram</a>}{contact.email && <a className="linkButton" href={`mailto:${contact.email}`}>Email</a>}</div></div>;
+      }) : <p className="muted">Добавь контакт вручную или импортируй телефонную книгу .vcf.</p>}
+      <div className="promptStack"><button onClick={() => onCommand("Набери Кайрата")}>Набери Кайрата</button><button onClick={() => onCommand("Напиши Кайрату в Telegram")}>Напиши Кайрату в Telegram</button></div>
     </section>}
 
     {active === "connections" && <section className="panel">
