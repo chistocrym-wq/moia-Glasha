@@ -118,9 +118,16 @@ declare
   total_count integer;
   done_count integer;
 begin
-  parent_id := coalesce(new.parent_task_id, old.parent_task_id);
+  if tg_op = 'DELETE' then
+    parent_id := old.parent_task_id;
+  elsif tg_op = 'INSERT' then
+    parent_id := new.parent_task_id;
+  else
+    parent_id := coalesce(new.parent_task_id, old.parent_task_id);
+  end if;
+
   if parent_id is null then
-    return coalesce(new, old);
+    if tg_op = 'DELETE' then return old; else return new; end if;
   end if;
 
   select
@@ -151,9 +158,9 @@ begin
     where id = parent_id and is_project is distinct from false;
   end if;
 
-  return coalesce(new, old);
+  if tg_op = 'DELETE' then return old; else return new; end if;
 end;
-$$;
+$;
 
 drop trigger if exists glasha_sync_parent_progress on public.tasks;
 create trigger glasha_sync_parent_progress
