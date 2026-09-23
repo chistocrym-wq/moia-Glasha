@@ -666,27 +666,241 @@ async function findDocument(rt: Runtime, query: string) {
   return { data: withUrls, reply: withUrls.length ? `Нашла документов: ${withUrls.length}.` : "Такого документа в архиве не нашла." };
 }
 
+type TaskActionRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  area: "personal" | "work";
+  due_date: string | null;
+  due_time: string | null;
+  reminder_at: string | null;
+  priority: "low" | "normal" | "high" | "urgent";
+  status: string;
+  goal_id: string | null;
+  parent_task_id: string | null;
+  is_project: boolean;
+  updated_at: string;
+};
+
+async function resolveTaskForAction(rt: Runtime, taskQuery: string | null) {
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .select("id,title,description,area,due_date,due_time,reminder_at,priority,status,goal_id,parent_task_id,is_project,updated_at")
+      .eq("user_id", rt.userId)
+      .neq("status", "cancelled")
+      .order("updated_at", { ascending: false })
+      .limit(100)
+  );
+  if (error) throw error;
+  const tasks = (data ?? []) as TaskActionRow[];
+  if (!tasks.length) return { task: null, clarification: "У тебя пока нет задач." };
+
+  if (!taskQuery) {
+    const latest = tasks[0];
+    const ageMs = Date.now() - new Date(latest.updated_at).getTime();
+    if (ageMs > 30 * 60_000) {
+      return { task: null, clarification: "Какую именно задачу нужно переместить?" };
+    }
+    return { task: latest, clarification: null };
+  }
+
+  const wanted = normalize(taskQuery)
+    .replace(/^задач[ауи]?\s+/i, "")
+    .replace(/^про\s+/i, "")
+    .trim();
+  const tokens = wanted.split(/\s+/).filter((token) => token.length >= 3);
+
+  const scored = tasks.map((task) => {
+    const title = normalize(task.title);
+    let score = title === wanted ? 100 : 0;
+    if (wanted && title.includes(wanted)) score += 60;
+    if (wanted && wanted.includes(title)) score += 40;
+    score += tokens.filter((token) => title.includes(token)).length * 10;
+    return { task, score };
+  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
+
+  if (!scored.length) return { task: null, clarification: `Не нашла задачу «${taskQuery}».` };
+  if (scored.length > 1 && scored[0].score === scored[1].score) {
+    const titles = scored.slice(0, 3).map((item) => `«${item.task.title}»`).join(", ");
+    return { task: null, clarification: `Нашла несколько похожих задач: ${titles}. Какую выбрать?` };
+  }
+  return { task: scored[0].task, clarification: null };
+}
+
+async function moveTask(rt: Runtime, taskQuery: string | null, area: "personal" | "work") {
+  const resolved = await resolveTaskForAction(rt, taskQuery);
+  if (!resolved.task) return { needs_clarification: true, reply: resolved.clarification || "Какую задачу переместить?" };
+
+  const before = resolved.task;
+  if (before.area === area) {
+    return {
+      data: [{ ...before, preserved_id: true }],
+      reply: `Задача «${before.title}» уже в разделе «${area === "work" ? "Работа" : "Личное"}».`,
+    };
+  }
+
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .update({ area, updated_at: new Date().toISOString() })
+      .eq("user_id", rt.userId)
+      .eq("id", before.id)
+      .select("id,title,area,due_date,due_time,reminder_at,priority,status,goal_id,parent_task_id,is_project")
+      .single()
+  );
+  if (error) throw error;
+
+  return {
+    data: [{
+      ...data,
+      previous_area: before.area,
+      preserved: {
+        id: data.id === before.id,
+        due_date: data.due_date === before.due_date,
+        due_time: String(data.due_time || "") === String(before.due_time || ""),
+        reminder_at: data.reminder_at === before.reminder_at,
+        priority: data.priority === before.priority,
+        status: data.status === before.status,
+        goal_id: data.goal_id === before.goal_id,
+        parent_task_id: data.parent_task_id === before.parent_task_id,
+      },
+    }],
+    reply: `Переместила «${before.title}» в «${area === "work" ? "Работа" : "Личное"}». Задача осталась той же, без дубля.`,
+  };
+}
+
+async function splitTask(rt: Runtime, taskQuery: string) {
+  const resolved = await resolveTaskForAction(rt, taskQuery);
+  if (!resolved.task) return { needs_clarification: true, reply: resolved.clarification || "Какую задачу разбить на шаги?" };
+  const parent = resolved.task;
+
+  const { data: existing, error: existingError } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .select("id,title,status,due_date,due_time,priority,area,parent_task_id")
+      .eq("user_id", rt.userId)
+      .eq("parent_task_id", parent.id)
+      .order("sort_order")
+      .order("created_at")
+  );
+  if (existingError) throw existingError;
+
+  if ((existing ?? []).length) {
+    const completed = (existing ?? []).filter((item) => item.status === "done").length;
+    const total = (existing ?? []).length;
+    return {
+      data: existing,
+      reply: `«${parent.title}» уже проект: ${completed}/${total} шагов выполнено (${Math.round((completed / total) * 100)}%).`,
+    };
+  }
+
+  const model = fastModel();
+  const openai = getOpenAI(rt);
+  markAi(rt, model, "fast");
+  const stepSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      steps: {
+        type: "array",
+        minItems: 3,
+        maxItems: 7,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: { type: "string" },
+            priority: { type: "string", enum: ["low","normal","high","urgent"] },
+          },
+          required: ["title","priority"],
+        },
+      },
+    },
+    required: ["steps"],
+  } as const;
+
+  const response = await openai.responses.create({
+    model,
+    store: false,
+    reasoning: { effort: "low" },
+    instructions:
+      "Разбей одну существующую задачу на 3–7 конкретных выполнимых подзадач. " +
+      "Не создавай новую родительскую задачу. Не придумывай даты, время или напоминания. " +
+      "Подзадачи должны быть короткими и не дублировать родителя. Ответ только по JSON-схеме.",
+    input: `Задача: ${parent.title}\nОписание: ${parent.description || "нет"}\nОбласть: ${parent.area}\nПриоритет родителя: ${parent.priority}`,
+    text: { format: { type: "json_schema", name: "task_steps", schema: stepSchema, strict: true } },
+  });
+  const generated = JSON.parse(response.output_text) as { steps: Array<{ title: string; priority: "low" | "normal" | "high" | "urgent" }> };
+
+  const { error: projectError } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .update({ is_project: true, updated_at: new Date().toISOString() })
+      .eq("user_id", rt.userId)
+      .eq("id", parent.id)
+  );
+  if (projectError) throw projectError;
+
+  const rows = generated.steps.map((step, index) => ({
+    user_id: rt.userId,
+    parent_task_id: parent.id,
+    area: parent.area,
+    title: step.title.trim(),
+    due_date: null,
+    due_time: null,
+    reminder_at: null,
+    priority: step.priority || parent.priority,
+    status: "todo",
+    goal_id: parent.goal_id,
+    source: rt.source,
+    sort_order: (index + 1) * 10,
+  }));
+
+  const { data, error } = await tracked(rt,
+    rt.supabase.from("tasks")
+      .insert(rows)
+      .select("id,title,status,due_date,due_time,reminder_at,priority,area,parent_task_id,goal_id,sort_order")
+  );
+  if (error) throw error;
+
+  return {
+    data,
+    reply: `Превратила «${parent.title}» в проект и создала ${data?.length || 0} подзадач. Родительская задача сохранена.`,
+  };
+}
+
 async function openService(rt: Runtime, serviceName: string) {
   const connections = await loadConnections(rt);
   const wanted = normalize(serviceName);
-  const connection = connections.find((item) =>
-    normalize(item.service) === wanted ||
-    normalize(item.display_name).includes(wanted) ||
-    wanted.includes(normalize(item.display_name))
-  );
-  if (!connection) return { reply: "Такого сервиса в «Подключениях» пока нет." };
-  if (connection.capability === "NOT_CONNECTED" && !connection.open_url && !connection.deep_link) {
-    return { reply: `${connection.display_name}: интеграция не подключена.` };
+  const connection = connections.find((item) => {
+    const aliases = item.aliases ?? [];
+    return normalize(item.service) === wanted ||
+      normalize(item.display_name) === wanted ||
+      normalize(item.display_name).includes(wanted) ||
+      wanted.includes(normalize(item.display_name)) ||
+      aliases.some((alias) => normalize(alias) === wanted || normalize(alias).includes(wanted) || wanted.includes(normalize(alias)));
+  });
+  if (!connection) return { reply: "Такого приложения в «Подключениях» пока нет." };
+  if (!connection.enabled) return { reply: `${connection.display_name} скрыто в «Подключениях». Включи его, чтобы открывать командой.` };
+
+  const nativeUrl = connection.deep_link || connection.url_scheme;
+  const universalUrl = connection.universal_link;
+  const fallbackUrl = connection.web_fallback_url || connection.open_url || universalUrl;
+  if (connection.capability === "NOT_CONNECTED" && !nativeUrl && !fallbackUrl) {
+    return { reply: `${connection.display_name}: интеграция не подключена и ссылка для открытия не настроена.` };
   }
+
   return {
     data: [{
       id: connection.id,
       title: connection.display_name,
+      platform: connection.platform,
       capability: connection.capability,
-      action_url: connection.deep_link || connection.open_url,
-      fallback_url: connection.open_url,
+      native_url: nativeUrl,
+      universal_url: universalUrl,
+      action_url: nativeUrl || universalUrl || fallbackUrl,
+      fallback_url: fallbackUrl,
     }],
-    reply: `Можно открыть ${connection.display_name}. Это режим ${connection.capability}, не доступ к содержимому аккаунта.`,
+    reply: connection.capability === "OPEN_ONLY"
+      ? `Открываю ${connection.display_name}. Это только запуск приложения/сайта — аккаунт к Глаше не подключён.`
+      : `Открываю ${connection.display_name}. Возможность: ${connection.capability}.`,
   };
 }
 
@@ -850,6 +1064,8 @@ async function executeDeterministic(rt: Runtime, route: DeterministicRoute, rawT
   });
 
   if (route.kind === "query_schedule") return querySchedule(rt, route.range);
+  if (route.kind === "move_task") return moveTask(rt, route.taskQuery, route.area);
+  if (route.kind === "split_task") return splitTask(rt, route.taskQuery);
 
   if (route.kind === "create_expense") return createExpense(rt, {
     amount: route.amount,
@@ -1010,6 +1226,11 @@ async function executeParsed(rt: Runtime, parsed: Parsed, rawText: string) {
   }
 
   if (parsed.action === "find_document") return findDocument(rt, parsed.document_query || parsed.title || rawText);
+  if (parsed.action === "move_task") {
+    if (!parsed.target_area) return { needs_clarification: true, reply: "Куда переместить задачу: в личное или в работу?" };
+    return moveTask(rt, parsed.task_query || parsed.title, parsed.target_area);
+  }
+  if (parsed.action === "split_task") return splitTask(rt, parsed.task_query || parsed.title || rawText);
   if (parsed.action === "open_service") return openService(rt, parsed.service_name || parsed.title || rawText);
   if (parsed.action === "contact_action") return contactAction(rt, {
     contactName: parsed.contact_name || parsed.title || "",
@@ -1128,7 +1349,7 @@ export async function POST(request: Request) {
     } else {
       const summary = actionSummary(executed);
       const firstReadable = executed.find((item) =>
-        ["query_schedule","query_expenses","check_availability","find_document","open_service","contact_action","search_tickets","advice"].includes(item.action)
+        ["query_schedule","query_expenses","check_availability","find_document","open_service","contact_action","search_tickets","move_task","split_task","advice"].includes(item.action)
       );
       const reply = [
         summary,
