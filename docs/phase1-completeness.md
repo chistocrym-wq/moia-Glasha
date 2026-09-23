@@ -9,10 +9,10 @@ The implementation is intentionally not marked IMPLEMENTED merely because code e
 | 1 | Projects / parent tasks | BLOCKED | `004_projects_move_phone_hub.sql`, `007_phase1_projects_achievements.sql`, task UI | CI + rollback SQL suite prepared; isolated DB live E2E pending |
 | 2 | Subtasks nested only inside parent | BLOCKED | `glasha_list_root_tasks()`, lazy child loading in `page.tsx` | code/build PASS; Preview DB E2E pending |
 | 3 | Parent progress percentage | BLOCKED | `glasha_list_root_tasks()`, task/project progress UI | rollback acceptance asserts 25/50%; not yet run on isolated DB |
-| 4 | Parent completion at 100% | BLOCKED | `glasha_sync_parent_progress()` | rollback acceptance prepared; isolated DB pending |
+| 4 | Parent completion at 100% | BLOCKED | `sync_glasha_parent_completion()` from `006_task_achievements_lifecycle.sql` | rollback acceptance prepared; isolated DB pending |
 | 5 | Move Personal ↔ Work preserving id/data | BLOCKED | `glasha_move_task_area()`, deterministic move route | unit routing PASS; DB live proof pending |
 | 6 | “Мои достижения” 14 days | BLOCKED | achievements section in `page.tsx` | build PASS; live data window behavior pending |
-| 7 | completed_at | BLOCKED | `006_life_os_phase1.sql`, completion trigger | schema/test prepared; isolated DB pending |
+| 7 | completed_at | BLOCKED | `006_task_achievements_lifecycle.sql`, `stamp_glasha_task_completion()` | schema/test prepared; isolated DB pending |
 | 8 | Restore completed task | BLOCKED | `/api/life/tasks`, achievements restore UI | build PASS; live row/id proof pending |
 | 9 | Achievements exclude child tasks as root cards | BLOCKED | achievements root filtering + nested children | build PASS; live hierarchy proof pending |
 | 10 | Entity relationships | BLOCKED | `entity_links`, ownership validators, `/api/life/links` | RLS acceptance prepared; isolated DB pending |
