@@ -22,7 +22,7 @@ import {
 } from "@/lib/document-upload";
 
 type SectionId =
-  | "home" | "tasks" | "work" | "calendar" | "finance" | "health"
+  | "home" | "tasks" | "work" | "achievements" | "calendar" | "finance" | "health"
   | "goals" | "learning" | "travel" | "documents" | "contacts" | "connections" | "quick" | "advisor" | "chat";
 
 type Task = {
@@ -38,6 +38,7 @@ type Task = {
   goalTitle?: string;
   parentTaskId?: string;
   isProject?: boolean;
+  completedAt?: string;
 };
 
 type Expense = {
@@ -77,6 +78,7 @@ const sections: Array<{ id: SectionId; label: string; icon: string; subtitle: st
   { id: "home", label: "Главная", icon: "⌂", subtitle: "Всё важное сейчас", image: "home" },
   { id: "tasks", label: "Мои дела", icon: "✓", subtitle: "Личное и бытовое", image: "cooking" },
   { id: "work", label: "Работа", icon: "▣", subtitle: "Проекты и задачи", image: "work" },
+  { id: "achievements", label: "Мои достижения", icon: "★", subtitle: "Выполненное за 14 дней", image: "ideas" },
   { id: "calendar", label: "Календарь", icon: "◫", subtitle: "События и напоминания", image: "travel" },
   { id: "finance", label: "Финансы", icon: "₽", subtitle: "Расходы по категориям", image: "documents" },
   { id: "health", label: "Здоровье", icon: "♡", subtitle: "Самочувствие и цикл", image: "health" },
@@ -310,7 +312,7 @@ export default function Home() {
       taskRes, taskGoalRes, eventRes, eventAreaRes, expenseRes, noteRes, goalRes, healthRes,
       categoryRes, profileRes, documentRes, contactRes, connectionRes
     ] = await Promise.all([
-      supabase.from("tasks").select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project").eq("user_id", userId).order("due_date", { ascending: true }),
+      supabase.from("tasks").select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at").eq("user_id", userId).order("due_date", { ascending: true }),
       supabase.from("tasks").select("id,goal_id,goals(title)").eq("user_id", userId),
       supabase.from("calendar_events").select("id,title,start_at,kind").eq("user_id", userId).order("start_at", { ascending: true }).limit(100),
       supabase.from("calendar_events").select("id,area,end_at").eq("user_id", userId).limit(100),
@@ -348,6 +350,8 @@ export default function Home() {
         goalTitle: goal?.title || undefined,
         parentTaskId: row.parent_task_id || undefined,
         isProject: Boolean(row.is_project),
+        completedAt: row.completed_at || undefined,
+        completedAt: row.completed_at || undefined,
       };
     }));
 
@@ -444,7 +448,7 @@ export default function Home() {
   async function refreshTasksOnly() {
     if (!supabase || !userId) return;
     const { data, error } = await supabase.from("tasks")
-      .select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,goals(title)")
+      .select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at,goals(title)")
       .eq("user_id", userId)
       .order("due_date", { ascending: true });
     if (error) {
@@ -756,11 +760,18 @@ export default function Home() {
     }
     const task = tasks.find((item) => item.id === id);
     if (!task) return;
+    if (tasks.some((item) => item.parentTaskId === id)) {
+      setAnswer("Крупная задача завершится автоматически, когда будут выполнены все её подзадачи.");
+      return;
+    }
     const nextStatus = task.done ? "todo" : "done";
-    const { error } = await supabase.from("tasks").update({ status: nextStatus, updated_at: new Date().toISOString() }).eq("id", id);
+    const { error } = await supabase.from("tasks")
+      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("id", id);
     if (error) setAnswer("Не смогла изменить задачу.");
     else {
-      setTasks((items) => items.map((item) => item.id === id ? { ...item, done: nextStatus === "done" } : item));
+      await refreshTasksOnly();
       setAnswer(nextStatus === "done" ? "Отметила как выполненное." : "Вернула задачу в работу.");
     }
   }
@@ -810,7 +821,7 @@ export default function Home() {
       status: "todo",
       goal_id: parent.goalId || null,
       source: "manual",
-    }).select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project").single();
+    }).select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at").single();
 
     if (error) {
       console.error("add_subtask_failed", { code: error.code, message: error.message, parentId });
@@ -824,22 +835,7 @@ export default function Home() {
       .eq("id", parent.id);
     if (projectError) console.error("mark_project_failed", { code: projectError.code, message: projectError.message, parentId });
 
-    setTasks((items) => [
-      ...items.map((item) => item.id === parent.id ? { ...item, isProject: true } : item),
-      {
-        id: data.id,
-        title: data.title,
-        area: data.area === "work" ? "Работа" : "Личное",
-        done: data.status === "done",
-        dueDate: data.due_date || undefined,
-        time: data.due_time ? String(data.due_time).slice(0, 5) : undefined,
-        reminderAt: data.reminder_at || undefined,
-        priority: data.priority || undefined,
-        goalId: data.goal_id || undefined,
-        parentTaskId: data.parent_task_id || undefined,
-        isProject: Boolean(data.is_project),
-      },
-    ]);
+    await refreshTasksOnly();
     setAnswer(`Добавила подзадачу «${data.title}».`);
   }
 
@@ -1188,8 +1184,9 @@ export default function Home() {
     }
   }
 
-  const pendingPersonal = tasks.filter((item) => !item.done && item.area === "Личное").length;
-  const pendingWork = tasks.filter((item) => !item.done && item.area === "Работа").length;
+  const activeRootTasks = tasks.filter((item) => !item.parentTaskId && !item.done);
+  const pendingPersonal = activeRootTasks.filter((item) => item.area === "Личное").length;
+  const pendingWork = activeRootTasks.filter((item) => item.area === "Работа").length;
   const expenseTotals = useMemo(() => {
     const totals: Record<string, number> = {};
     for (const item of expenses) totals[item.currency] = (totals[item.currency] || 0) + item.amount;
@@ -1255,7 +1252,7 @@ export default function Home() {
         <div className="overviewGrid">{todayOverview.map((x) => <article key={x.label} className={`statCard ${x.tone}`}><span>{x.label}</span><strong>{x.value}</strong></article>)}</div>
 
         <div className="twoColumns"><section className="panel"><div className="panelHeader"><div><p className="eyebrow">Сейчас</p><h3>Что требует внимания</h3></div><button className="linkButton" onClick={() => setActive("tasks")}>Все дела →</button></div>
-          <div className="taskList">{tasks.filter(t => !t.done).slice(0, 5).map(t => <div key={t.id} className="taskRow taskRowStatic"><button className="checkButton" onClick={() => toggleTask(t.id)}><span className="checkCircle"/></button><span className="taskText"><b>{t.title}</b><small>{t.area}{t.dueDate ? ` · ${t.dueDate}` : ""}{t.time ? ` · ${t.time}` : ""}</small></span></div>)}</div></section>
+          <div className="taskList">{activeRootTasks.slice(0, 5).map(t => { const children = tasks.filter(child => child.parentTaskId === t.id); const completed = children.filter(child => child.done).length; const percent = children.length ? Math.round((completed / children.length) * 100) : 0; return <div key={t.id} className="taskRow taskRowStatic"><button className="checkButton" onClick={() => children.length ? setActive(t.area === "Работа" ? "work" : "tasks") : toggleTask(t.id)} title={children.length ? "Открыть подзадачи" : "Отметить выполненной"}><span className="checkCircle"/></button><span className="taskText"><b>{t.title}</b><small>{t.area}{t.dueDate ? ` · ${t.dueDate}` : ""}{t.time ? ` · ${t.time}` : ""}</small>{children.length > 0 && <span className="projectProgress"><span><i style={{ width: `${percent}%` }}/></span><small>{completed} из {children.length} выполнено · {percent}%</small></span>}</span></div>; })}</div></section>
           <section className="panel softPanel"><div className="panelHeader"><div><p className="eyebrow">Глаша заметила</p><h3>Не потерять</h3></div></div>
             <div className="insight"><span className="insightIcon">✦</span><div><b>{notes.length ? `${notes.length} мыслей ждут разбора` : "Входящие мысли пусты"}</b><p>{notes.length ? "Их можно превратить в задачи, цели или просто оставить как мысли." : "Говори всё, что приходит в голову — я сохраню."}</p></div></div>
             <div className="insight"><span className="insightIcon">☆</span><div><b>{goals.length ? `${goals.length} активных целей и мечт` : "Добавь первую мечту"}</b><p>Советчик сможет разложить цель на конкретные шаги.</p></div></div>
@@ -1296,6 +1293,7 @@ export default function Home() {
         onSaveDocument={saveDocumentToArchive}
         onOpenDocument={openDocumentFromArchive}
         onCommand={processCommand}
+        onOpenSection={setActive}
       />}
     </section>
 
@@ -1476,7 +1474,7 @@ function SectionContent({
   active, currentImage, tasks, events, expenses, notes, goals, healthEvents, categories, documents, contacts, connections, liveData, totalText,
   advisorQuestion, advisorAnswer, advisorBusy, onAdvisorQuestion, onSubmitAdvisor,
   onToggleTask, onMoveTask, onAddSubtask, onSplitTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact,
-  onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand,
+  onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand, onOpenSection,
 }: {
   active: SectionId;
   currentImage: GlashaImage;
@@ -1513,9 +1511,17 @@ function SectionContent({
   onSaveDocument: (file: File, metadata: DocumentUploadMetadata, onProgress?: (percent: number) => void) => Promise<void>;
   onOpenDocument: (id: string) => void;
   onCommand: (text: string, source?: "text" | "voice") => void;
+  onOpenSection: (id: SectionId) => void;
 }) {
   const [calendarFilter, setCalendarFilter] = useState<"all" | "personal" | "work" | "health" | "goals" | "travel">("all");
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(() => new Set());
   const latestCycle = healthEvents.find((item) => item.kind === "cycle_start");
+  const achievementWindowMs = 14 * 24 * 60 * 60 * 1000;
+  const completedRootTasks = tasks
+    .filter((task) => !task.parentTaskId && task.done && task.completedAt)
+    .sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
+  const recentAchievements = completedRootTasks.filter((task) => Date.now() - new Date(task.completedAt || 0).getTime() < achievementWindowMs);
+  const archivedAchievements = completedRootTasks.filter((task) => Date.now() - new Date(task.completedAt || 0).getTime() >= achievementWindowMs);
   const categoryTotals = useMemo(() => {
     const totals: Record<string, Record<string, number>> = {};
     for (const expense of expenses) {
@@ -1526,6 +1532,7 @@ function SectionContent({
   }, [expenses]);
 
   const filteredTasks = tasks.filter((task) => {
+    if (task.parentTaskId || task.done) return false;
     if (calendarFilter === "all") return Boolean(task.dueDate);
     if (calendarFilter === "personal") return task.area === "Личное" && Boolean(task.dueDate);
     if (calendarFilter === "work") return task.area === "Работа" && Boolean(task.dueDate);
@@ -1566,24 +1573,34 @@ function SectionContent({
     return tasks.filter((task) => task.parentTaskId === parentId);
   }
 
+  function toggleExpandedTask(id: string) {
+    setExpandedTasks((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   function renderTaskTree(task: Task, depth = 0): React.ReactNode {
     const children = taskChildren(task.id);
     const completed = children.filter((child) => child.done).length;
     const total = children.length;
     const percent = total ? Math.round((completed / total) * 100) : 0;
+    const expanded = expandedTasks.has(task.id);
     const showInArea = active === "tasks" || task.area === "Работа";
 
     if (!showInArea && depth === 0) return null;
 
     return <div className={depth ? "taskTree nested" : "taskTree"} key={task.id}>
       <div className={`taskRow taskRowStatic ${task.done ? "done" : ""}`}>
-        <button className="checkButton" onClick={() => onToggleTask(task.id)}><span className="checkCircle">{task.done ? "✓" : ""}</span></button>
+        <button className={children.length ? "checkButton projectCheck" : "checkButton"} onClick={() => children.length ? toggleExpandedTask(task.id) : onToggleTask(task.id)} title={children.length ? "Открыть подзадачи" : task.done ? "Вернуть в работу" : "Отметить выполненной"}><span className="checkCircle">{task.done ? "✓" : ""}</span></button>
         <span className="taskText">
-          <b>{task.title}{children.length ? <span className="projectBadge">проект</span> : null}</b>
+          <b>{children.length ? <button type="button" className="taskTitleButton" onClick={() => toggleExpandedTask(task.id)} aria-expanded={expanded}>{task.title}<span className="projectBadge">проект</span><span className="taskExpandMark">{expanded ? "⌄" : "›"}</span></button> : task.title}</b>
           <small>{task.area}{task.dueDate ? ` · ${task.dueDate}` : ""}{task.time ? ` · ${task.time}` : ""}{task.priority ? ` · ${task.priority}` : ""}{task.goalTitle ? ` · цель: ${task.goalTitle}` : ""}</small>
           {total > 0 && <span className="projectProgress">
             <span><i style={{ width: `${percent}%` }} /></span>
-            <small>{completed}/{total} · {percent}%</small>
+            <small>{completed} из {total} выполнено · {percent}%</small>
           </span>}
         </span>
         <div className="taskActions">
@@ -1593,8 +1610,24 @@ function SectionContent({
           <button className="attachButton" onClick={() => onAttachTask(task.id)} title="Прикрепить документ">📎</button>
         </div>
       </div>
-      {children.length > 0 && <div className="taskChildren">{children.map((child) => renderTaskTree(child, depth + 1))}</div>}
+      {children.length > 0 && expanded && <div className="taskChildren">{children.map((child) => renderTaskTree(child, depth + 1))}</div>}
     </div>;
+  }
+
+  function renderAchievementCard(task: Task, archived = false) {
+    const children = taskChildren(task.id);
+    const completed = children.filter((child) => child.done).length;
+    const total = children.length;
+    const percent = total ? Math.round((completed / total) * 100) : 100;
+    const expanded = expandedTasks.has(task.id);
+    return <article className={archived ? "achievementCard archived" : "achievementCard"} key={task.id}>
+      <button type="button" className="achievementSummary" onClick={() => children.length && toggleExpandedTask(task.id)} aria-expanded={children.length ? expanded : undefined}>
+        <span className="achievementMark">✓</span>
+        <span className="achievementCopy"><b>{task.title}</b><small>{task.area}{task.completedAt ? ` · выполнено ${formatDateTime(task.completedAt)}` : ""}</small>{total > 0 && <span className="projectProgress"><span><i style={{ width: `${percent}%` }} /></span><small>{completed} из {total} выполнено · {percent}%</small></span>}</span>
+        {children.length > 0 && <span className="achievementChevron">{expanded ? "⌄" : "›"}</span>}
+      </button>
+      {children.length > 0 && expanded && <div className="achievementChildren">{children.map((child) => <div className="achievementChild" key={child.id}><span>{child.done ? "✓" : "○"}</span><div><b>{child.title}</b><small>{child.done ? "Выполнено" : "Не завершено"}</small></div></div>)}</div>}
+    </article>;
   }
 
   return <div className="sectionLayout">
@@ -1603,11 +1636,23 @@ function SectionContent({
     {(active === "tasks" || active === "work") && <section className="panel">
       <div className="panelHeader"><div><p className="eyebrow">{active === "work" ? "Работа" : "Личное + работа"}</p><h3>{active === "work" ? "Текущие задачи" : "Все дела"}</h3></div><button className="primaryButton" onClick={() => onAddTask(active === "work" ? "Работа" : "Личное")}>+ Добавить</button></div>
       <div className="taskList">
-        {tasks.filter((task) => !task.parentTaskId).map((task) => renderTaskTree(task))}
-        {active === "work" && tasks.filter((task) => task.parentTaskId && task.area === "Работа" && tasks.find((parent) => parent.id === task.parentTaskId)?.area !== "Работа").map((task) => renderTaskTree(task))}
+        {tasks.filter((task) => !task.parentTaskId && !task.done && (active === "tasks" || task.area === "Работа")).map((task) => renderTaskTree(task))}
+        {!tasks.some((task) => !task.parentTaskId && !task.done && (active === "tasks" || task.area === "Работа")) && <p className="muted">Активных крупных задач сейчас нет.</p>}
       </div>
       {!liveData && <p className="demoNote">Демо-данные. После входа здесь будут реальные задачи и вложения.</p>}
     </section>}
+
+    {active === "achievements" && <>
+      <section className="panel achievementsPanel">
+        <div className="panelHeader"><div><p className="eyebrow">Последние 14 дней</p><h3>Мои достижения</h3></div><span className="achievementCount">{recentAchievements.length}</span></div>
+        <p className="muted achievementIntro">Здесь остаются только завершённые крупные задачи. Подзадачи не создают отдельные карточки — они раскрываются внутри своего результата.</p>
+        <div className="achievementList">{recentAchievements.length ? recentAchievements.map((task) => renderAchievementCard(task)) : <p className="muted">Завершённые крупные задачи появятся здесь автоматически.</p>}</div>
+      </section>
+      <details className="panel achievementArchive">
+        <summary><span>Архив</span><small>{archivedAchievements.length} задач</small></summary>
+        <div className="achievementList">{archivedAchievements.length ? archivedAchievements.map((task) => renderAchievementCard(task, true)) : <p className="muted">В архиве пока пусто.</p>}</div>
+      </details>
+    </>}
 
     {active === "calendar" && <section className="panel">
       <div className="panelHeader"><div><p className="eyebrow">Единый календарь</p><h3>Задачи + события</h3></div><div className="calendarActions"><button className="linkButton" onClick={copyTasks} disabled={!tasksText}>Копировать задачи</button><button className="linkButton" onClick={copyPlan} disabled={!planText}>Копировать план</button><button className="linkButton" onClick={sharePlan} disabled={!planText}>Поделиться</button></div></div>
@@ -1694,7 +1739,7 @@ function SectionContent({
       <ConnectionsImportForm disabled={!liveData} onImport={onImportConnections} />
     </section>}
 
-    {active === "quick" && <div className="quickGrid"><InstallGlashaTile />{[["🏦","Банк"],["▣","Госуслуги"],["✉","Почта"],["◫","Календарь"],["✈","Tutu"],["⌖","Карты"],["文","Переводчик"],["💬","Telegram"]].map(([i,n]) => <button className="quickTile" key={n} onClick={() => onCommand(`Открой ${n}`)}><span>{i}</span><b>{n}</b></button>)}</div>}
+    {active === "quick" && <div className="quickGrid"><InstallGlashaTile /><button className="quickTile" onClick={() => onOpenSection("achievements")}><span>★</span><b>Мои достижения</b></button>{[["🏦","Банк"],["▣","Госуслуги"],["✉","Почта"],["◫","Календарь"],["✈","Tutu"],["⌖","Карты"],["文","Переводчик"],["💬","Telegram"]].map(([i,n]) => <button className="quickTile" key={n} onClick={() => onCommand(`Открой ${n}`)}><span>{i}</span><b>{n}</b></button>)}</div>}
 
     {active === "advisor" && <div className="twoColumns"><section className="panel"><h3>Спроси Советчика</h3><p className="muted">Он получает только релевантные задачи, цели, календарь или финансы. Для актуальных внешних данных может использовать web search.</p><form className="advisorForm" onSubmit={onSubmitAdvisor}><textarea value={advisorQuestion} onChange={(e) => onAdvisorQuestion(e.target.value)} placeholder="Например: что мне сделать на этой неделе для B1?"/><button className="primaryButton" disabled={advisorBusy}>{advisorBusy ? "Думаю…" : "Спросить"}</button></form></section><section className="panel advisorAnswer"><h3>Ответ</h3><p>{advisorAnswer || "Здесь появится ответ Советчика."}</p></section></div>}
 
@@ -1706,6 +1751,7 @@ function headline(id: SectionId) {
   return ({
     tasks: "Ничего не держим в голове",
     work: "Помню, где мы остановились",
+    achievements: "Готовое тоже должно быть видно",
     calendar: "Все даты в одном месте",
     finance: "Деньги без тумана",
     health: "Забота о себе тоже дело",
@@ -1726,6 +1772,7 @@ function description(id: SectionId) {
   return ({
     tasks: "Личные и рабочие дела можно смотреть вместе или отдельно.",
     work: "Задачи, дедлайны и документы к ним — в одном рабочем контексте.",
+    achievements: "Завершённые крупные задачи хранятся здесь 14 дней, затем автоматически отображаются в архиве.",
     calendar: "Напоминания, встречи, дни рождения, здоровье и поездки.",
     finance: "Говори сумму и назначение — Глаша распределит расход по категории.",
     health: "Самочувствие, цикл, врачи, лекарства и заметки.",
