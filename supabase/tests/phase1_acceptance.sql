@@ -63,7 +63,7 @@ with c4 as (
   select a,'personal','__phase1_child_4__','todo','normal','manual',project_a,40 from phase1_test_ids returning id
 ) update phase1_test_ids set child_4=(select id from c4);
 
-do $
+do $$
 declare n integer; pct integer; rejected boolean := false;
 begin
   select count(*) into n from public.glasha_list_root_tasks() where id=(select project_a from phase1_test_ids);
