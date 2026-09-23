@@ -332,6 +332,138 @@ export default function Home() {
     }
   }
 
+  async function refreshTasksOnly() {
+    if (!supabase || !userId) return;
+    const { data, error } = await supabase.from("tasks")
+      .select("id,title,area,status,due_date,due_time,priority,goal_id,goals(title)")
+      .eq("user_id", userId)
+      .order("due_date", { ascending: true });
+    if (error) {
+      console.error("refresh_tasks_failed", error);
+      return;
+    }
+    setTasks((data ?? []).map((row) => {
+      const relation = row.goals as unknown;
+      const goal = Array.isArray(relation) ? relation[0] : relation as { title?: string } | null;
+      return {
+        id: row.id,
+        title: row.title,
+        area: row.area === "work" ? "Работа" : "Личное",
+        done: row.status === "done",
+        dueDate: row.due_date || undefined,
+        time: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
+        priority: row.priority || undefined,
+        goalId: row.goal_id || undefined,
+        goalTitle: goal?.title || undefined,
+      };
+    }));
+  }
+
+  async function refreshEventsAndHealth() {
+    if (!supabase || !userId) return;
+    const [eventRes, healthRes] = await Promise.all([
+      supabase.from("calendar_events").select("id,title,start_at,end_at,kind,area").eq("user_id", userId).order("start_at", { ascending: true }).limit(100),
+      supabase.from("health_events").select("id,kind,occurred_at,title").eq("user_id", userId).order("occurred_at", { ascending: false }).limit(100),
+    ]);
+    if (!eventRes.error) {
+      setEvents((eventRes.data ?? []).map((row) => ({
+        id: row.id,
+        title: row.title,
+        when: formatDateTime(row.start_at),
+        area: eventArea(row.area, row.kind),
+        kind: row.kind,
+        startAt: row.start_at,
+        endAt: row.end_at || undefined,
+      })));
+    } else console.error("refresh_events_failed", eventRes.error);
+    if (!healthRes.error) {
+      setHealthEvents((healthRes.data ?? []).map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        occurredAt: row.occurred_at,
+        title: row.title || undefined,
+      })));
+    } else console.error("refresh_health_failed", healthRes.error);
+  }
+
+  async function refreshExpensesOnly() {
+    if (!supabase || !userId) return;
+    const { data, error } = await supabase.from("expenses")
+      .select("id,amount,currency,occurred_at,merchant,note,expense_categories(name,slug)")
+      .eq("user_id", userId)
+      .order("occurred_at", { ascending: false })
+      .limit(300);
+    if (error) {
+      console.error("refresh_expenses_failed", error);
+      return;
+    }
+    setExpenses((data ?? []).map((row) => {
+      const relation = row.expense_categories as unknown;
+      const category = Array.isArray(relation) ? relation[0] : relation as { name?: string; slug?: string } | null;
+      return {
+        id: row.id,
+        title: row.merchant || row.note || category?.name || "Расход",
+        amount: Number(row.amount) || 0,
+        currency: row.currency || "RUB",
+        category: category?.name || "Другое",
+        categorySlug: category?.slug,
+        occurredAt: row.occurred_at,
+      };
+    }));
+  }
+
+  async function refreshGoalsOnly() {
+    if (!supabase || !userId) return;
+    const { data, error } = await supabase.from("goals")
+      .select("id,title,description,kind,target_date,status")
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error("refresh_goals_failed", error);
+      return;
+    }
+    setGoals((data ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      description: row.description || undefined,
+      kind: row.kind === "dream" ? "Мечта" : "Цель",
+      targetDate: row.target_date || undefined,
+    })));
+  }
+
+  async function refreshNotesOnly() {
+    if (!supabase || !userId) return;
+    const { data, error } = await supabase.from("inbox_entries")
+      .select("id,text,created_at,processed")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) {
+      console.error("refresh_notes_failed", error);
+      return;
+    }
+    setNotes((data ?? []).filter((row) => !row.processed).map((row) => ({
+      id: row.id,
+      text: row.text,
+      createdAt: row.created_at,
+    })));
+  }
+
+  async function refreshAfterAssistantAction(action?: string) {
+    if (!action) return;
+    if (action === "create_task") return refreshTasksOnly();
+    if (action === "create_expense") return refreshExpensesOnly();
+    if (action === "create_event" || action === "create_appointment" || action === "log_health" || action === "log_fitness" || action === "cycle_start") {
+      return refreshEventsAndHealth();
+    }
+    if (action === "create_goal") return refreshGoalsOnly();
+    if (action === "save_note") return refreshNotesOnly();
+    if (action === "brain_dump") {
+      await Promise.all([refreshTasksOnly(), refreshEventsAndHealth(), refreshExpensesOnly(), refreshGoalsOnly(), refreshNotesOnly()]);
+    }
+  }
+
   function eventArea(area?: string, kind?: string) {
     if (area === "health" || kind === "health" || kind === "cycle" || kind === "appointment") return "Здоровье";
     if (area === "travel" || kind === "trip") return "Поездки";
@@ -368,11 +500,6 @@ export default function Home() {
       setAnswer("Эта команда уже переведена на настоящий backend, но сейчас backend ещё не подключён к твоему аккаунту.");
       return;
     }
-    if (!systemStatus?.openai) {
-      setAnswer("Supabase подключён, но AI-маршрутизация ещё ждёт OPENAI_API_KEY.");
-      return;
-    }
-
     setBusy(true);
     setLastResult(null);
     try {
@@ -386,11 +513,11 @@ export default function Home() {
           else window.location.href = row.action_url;
         }
       }
-      if (!result.needs_clarification) await loadLiveData();
+      if (!result.needs_clarification) await refreshAfterAssistantAction(result.action);
     } catch (error) {
       const message = error instanceof Error ? error.message : "request_failed";
       if (message === "auth_required") setAnswer("Нужно войти в Глашу.");
-      else if (message === "openai_not_configured") setAnswer("OpenAI ещё не подключён.");
+      else if (message === "openai_not_configured") setAnswer("Эту фразу локальный parser не распознал. Для неоднозначных команд нужен OpenAI fallback.");
       else if (message === "supabase_not_configured") setAnswer("Supabase ещё не подключён.");
       else setAnswer("Не получилось выполнить команду. Я сохранила ошибку в консоль для отладки.");
       console.error(error);
@@ -695,7 +822,7 @@ export default function Home() {
   const connectionText =
     authState === "setup" ? "РЕЖИМ НАСТРОЙКИ · данные на экране демонстрационные и не сохраняются"
     : authState === "signed_out" ? "SUPABASE ПОДКЛЮЧЁН · войди, чтобы открыть личные данные"
-    : authState === "signed_in" && !systemStatus?.openai ? "БАЗА ПОДКЛЮЧЕНА · AI ждёт OPENAI_API_KEY"
+    : authState === "signed_in" && !systemStatus?.openai ? "БАЗА ПОДКЛЮЧЕНА · простые команды работают без AI, fallback недоступен"
     : authState === "signed_in" ? "ЛИЧНОЕ ПРОСТРАНСТВО ПОДКЛЮЧЕНО"
     : "ПРОВЕРЯЮ ПОДКЛЮЧЕНИЕ…";
 
