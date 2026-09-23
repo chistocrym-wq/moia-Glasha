@@ -141,3 +141,12 @@ font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans
 
 .lifeOsTools{padding:0!important}.lifeOsTools>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none;cursor:pointer;padding:18px 22px;font-weight:900;color:#565bc7}.lifeOsTools>summary::-webkit-details-marker{display:none}.lifeOsTools>summary small{color:var(--muted);font-size:11px;font-weight:700}.lifeOsToolsBody{display:grid;gap:18px;padding:0 18px 18px}
 @media(max-width:760px){.lifeOsTools>summary{align-items:flex-start;flex-direction:column}.lifeOsToolsBody{padding:0 12px 12px}}
+
+
+/* Phonebook import */
+.phonebookImport{display:grid;gap:10px;margin:14px 0 18px;padding:14px;border:1px solid var(--line);border-radius:16px;background:#fbfbfe}
+.phonebookActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.fileButton{position:relative;overflow:hidden;cursor:pointer}.fileButton input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.phonebookPreview{display:grid;gap:10px}.phonebookSummary{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}.phonebookSummary small{color:var(--muted)}
+.phonebookPreviewList{display:grid;max-height:320px;overflow:auto;border-top:1px solid var(--line)}.phonebookPreviewRow{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.phonebookPreviewRow small{display:block;color:var(--muted);margin-top:2px}.importStatus{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:9px;font-weight:900;text-transform:uppercase}.importStatus.new{background:#edf9f0;color:#397354}.importStatus.merge{background:#fff5e8;color:#9c6329}.importStatus.duplicate{background:#f2f2f5;color:#7a7e8b}
+.phonebookStatus{margin:0;padding:9px 11px;border-radius:11px;background:#f5f3ff;color:#5f64bf;font-size:12px}
