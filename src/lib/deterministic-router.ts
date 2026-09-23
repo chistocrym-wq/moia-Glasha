@@ -187,6 +187,13 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
   const time = timeToken(text);
 
   if (
+    (hasAny(text, ["могу я", "свободно ли", "есть ли окно"])) &&
+    hasAny(text, ["записаться", "поставить", "встретиться", " в "])
+  ) {
+    if (token && time) return { kind: "check_availability", dateToken: token, time, durationMinutes: 60 };
+  }
+
+  if (
     hasAny(text, ["записана к врачу", "записан к врачу", "записалась к врачу", "записался к врачу", "приём у врача", "прием у врача"]) ||
     (value.includes("врач") && Boolean(token) && Boolean(time))
   ) {
@@ -203,13 +210,6 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
 
   if (hasAny(text, ["начались месячные", "начался цикл", "началась менструация", "месячные начались"])) {
     return { kind: "cycle_start", dateToken: token || "today" };
-  }
-
-  if (
-    (hasAny(text, ["могу я", "свободно ли", "есть ли окно"])) &&
-    hasAny(text, ["записаться", "поставить", "встретиться", " в "])
-  ) {
-    if (token && time) return { kind: "check_availability", dateToken: token, time, durationMinutes: 60 };
   }
 
   if (
