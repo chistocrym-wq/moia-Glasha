@@ -660,7 +660,7 @@ async function checkAvailability(rt: Runtime, startAt: string, durationMinutes =
 async function findDocument(rt: Runtime, query: string) {
   const { data, error } = await tracked(rt,
     rt.supabase.from("documents")
-      .select("id,title,owner_person,document_type,expiry_date,tags,storage_path,mime_type,size_bytes,created_at")
+      .select("id,title,owner_person,owner_name,document_type,expiry_date,tags,storage_path,mime_type,size_bytes,created_at")
       .eq("user_id", rt.userId)
       .order("created_at", { ascending: false })
       .limit(200)
@@ -669,7 +669,7 @@ async function findDocument(rt: Runtime, query: string) {
 
   const wanted = normalize(query);
   const matches = (data ?? []).filter((doc) => {
-    const haystack = [doc.title, doc.owner_person, doc.document_type, ...(doc.tags ?? [])]
+    const haystack = [doc.title, doc.owner_person, doc.owner_name, doc.document_type, ...(doc.tags ?? [])]
       .filter(Boolean).join(" ").toLocaleLowerCase("ru-RU");
     return haystack.includes(wanted) || wanted.split(/\s+/).some((part) => part.length > 3 && haystack.includes(part));
   }).slice(0, 10);
