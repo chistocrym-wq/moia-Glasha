@@ -8,6 +8,7 @@ assert.equal(isSensitiveSpeechText("Паспортные данные готов
 assert.equal(isSensitiveSpeechText("+49 151 12345678"), true);
 assert.equal(speechText("  Задача   выполнена  "), "Задача выполнена");
 assert.equal(speechText("Пароль: qwerty"), null);
-assert.equal(speechText("1234567890", 5), "12345");
+assert.equal(speechText("1234567890", 5), null);
+assert.equal(speechText("Длинный безопасный ответ", 7), "Длинный");
 
 console.log("voice-output safety: PASS");
