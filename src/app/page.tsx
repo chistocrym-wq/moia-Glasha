@@ -79,7 +79,7 @@ type Note = { id: string; text: string; createdAt: string };
 type Goal = { id: string; title: string; kind: "Мечта" | "Цель"; targetDate?: string; description?: string };
 type HealthEvent = { id: string; kind: string; occurredAt: string; title?: string };
 type ExpenseCategory = { id: string; name: string; slug: string };
-type DocumentItem = { id: string; title: string; ownerPerson: string; documentType: string; expiryDate?: string; tags: string[]; mimeType?: string; sizeBytes?: number };
+type DocumentItem = { id: string; title: string; ownerPerson: string; ownerName?: string; documentType: string; expiryDate?: string; tags: string[]; mimeType?: string; sizeBytes?: number };
 type ContactPhone = { label: string; value: string; normalized: string };
 type ContactEmail = { label: string; value: string };
 type ContactItem = {
@@ -394,7 +394,7 @@ export default function Home() {
       supabase.from("health_events").select("id,kind,occurred_at,title").eq("user_id", userId).order("occurred_at", { ascending: false }).limit(100),
       supabase.from("expense_categories").select("id,name,slug").eq("user_id", userId).order("sort_order"),
       supabase.from("profiles").select("default_currency").eq("id", userId).maybeSingle(),
-      supabase.from("documents").select("id,title,owner_person,document_type,expiry_date,tags,mime_type,size_bytes").eq("user_id", userId).order("created_at", { ascending: false }).limit(100),
+      supabase.from("documents").select("id,title,owner_person,owner_name,document_type,expiry_date,tags,mime_type,size_bytes").eq("user_id", userId).order("created_at", { ascending: false }).limit(100),
       supabase.from("contacts").select("id,name,relation,phone,email,telegram_username,phone_numbers,emails,aliases,source,source_uid").eq("user_id", userId).order("name").limit(5000),
       supabase.from("connections").select("id,service,display_name,platform,open_url,deep_link,url_scheme,universal_link,web_fallback_url,capability,enabled,icon,aliases").eq("user_id", userId).order("display_name"),
     ]);
@@ -478,6 +478,7 @@ export default function Home() {
       id: row.id,
       title: row.title,
       ownerPerson: row.owner_person,
+      ownerName: row.owner_name || undefined,
       documentType: row.document_type,
       expiryDate: row.expiry_date || undefined,
       tags: row.tags ?? [],
@@ -1305,6 +1306,7 @@ export default function Home() {
         id: saved.id,
         title: saved.title,
         ownerPerson: saved.owner_person,
+        ownerName: saved.owner_name || undefined,
         documentType: saved.document_type,
         expiryDate: saved.expiry_date || undefined,
         tags: saved.tags ?? [],
@@ -1511,6 +1513,7 @@ function DocumentUploadForm({
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [ownerPerson, setOwnerPerson] = useState<DocumentUploadMetadata["ownerPerson"]>("user");
+  const [ownerName, setOwnerName] = useState("Юлия Катаускайте");
   const [documentType, setDocumentType] = useState("other");
   const [expiryDate, setExpiryDate] = useState("");
   const [tags, setTags] = useState("");
@@ -1536,6 +1539,7 @@ function DocumentUploadForm({
       await onSave(file, {
         title: title.trim(),
         ownerPerson,
+        ownerName: ownerName.trim() || undefined,
         documentType: documentType.trim() || "other",
         expiryDate: expiryDate || undefined,
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean),
@@ -1547,6 +1551,7 @@ function DocumentUploadForm({
       setStatus("Сохранено в приватном архиве.");
       setFile(null);
       setTitle("");
+      setOwnerName(ownerPerson === "user" ? "Юлия Катаускайте" : "");
       setDocumentType("other");
       setExpiryDate("");
       setTags("");
@@ -1574,9 +1579,20 @@ function DocumentUploadForm({
       <small>{file ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} МБ` : "До 50 МБ. Большие файлы загружаются частями напрямую в Supabase."}</small>
     </label>
     <label><span>Название</span><input value={title} onChange={(e) => setTitle(e.target.value)} disabled={disabled || uploading} required /></label>
-    <label><span>Чей документ</span><select value={ownerPerson} onChange={(e) => setOwnerPerson(e.target.value as DocumentUploadMetadata["ownerPerson"])} disabled={disabled || uploading}>
-      <option value="user">Мой</option><option value="child">Ребёнка</option><option value="mother">Мамы</option><option value="work">Рабочий</option><option value="other">Другое</option>
+    <label><span>Категория владельца</span><select value={ownerPerson} onChange={(e) => {
+      const next = e.target.value as DocumentUploadMetadata["ownerPerson"];
+      setOwnerPerson(next);
+      if (next === "user") setOwnerName("Юлия Катаускайте");
+      else if (next === "child") setOwnerName("Матвей");
+      else if (next === "mother") setOwnerName("Катаускене Светлана");
+      else if (next === "work") setOwnerName("Работа");
+      else setOwnerName("");
+    }} disabled={disabled || uploading}>
+      <option value="user">Мой</option><option value="child">Ребёнок</option><option value="mother">Мама</option><option value="work">Работа</option><option value="other">Другой человек</option>
     </select></label>
+    <label><span>Имя владельца</span><input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} list="document-owner-names" placeholder="Матвей, Кайрат, Валя…" disabled={disabled || uploading} required />
+      <datalist id="document-owner-names"><option value="Юлия Катаускайте"/><option value="Матвей"/><option value="Кайрат"/><option value="Валя"/><option value="Катаускас Альгис"/><option value="Катаускене Светлана"/></datalist>
+    </label>
     <label><span>Тип</span><input value={documentType} onChange={(e) => setDocumentType(e.target.value)} placeholder="passport, contract, insurance…" disabled={disabled || uploading} /></label>
     <label><span>Срок действия</span><input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} disabled={disabled || uploading} /></label>
     <label className="documentTags"><span>Теги</span><input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="паспорт, поездки" disabled={disabled || uploading} /></label>
@@ -1901,7 +1917,7 @@ function SectionContent({
       <p className="muted">Файл идёт из браузера прямо в private bucket Supabase. Через Netlify Function бинарные документы не проксируются.</p>
       <DocumentUploadForm disabled={!liveData} onSave={onSaveDocument} />
       <div className="documentArchive">
-        {documents.length ? documents.map(doc => <div className="documentRow" key={doc.id}><div><b>{doc.title}</b><small>{doc.documentType} · {doc.ownerPerson}{doc.expiryDate ? ` · действует до ${doc.expiryDate}` : ""}</small></div><button className="linkButton" onClick={() => onOpenDocument(doc.id)}>Открыть</button></div>) : <p className="muted">Документов пока нет.</p>}
+        {documents.length ? documents.map(doc => <div className="documentRow" key={doc.id}><div><b>{doc.title}</b><small>{doc.ownerName || doc.ownerPerson} · {doc.documentType}{doc.expiryDate ? ` · действует до ${doc.expiryDate}` : ""}</small></div><button className="linkButton" onClick={() => onOpenDocument(doc.id)}>Открыть</button></div>) : <p className="muted">Документов пока нет.</p>}
       </div>
       <div className="promptStack"><button onClick={() => onCommand("Глаша, найди мой паспорт")}>Найди мой паспорт</button></div>
     </section>}
