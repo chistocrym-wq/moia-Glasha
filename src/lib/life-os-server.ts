@@ -159,7 +159,7 @@ export async function listNotifications(db: LifeDb, userId: string) {
   const nowMs = Date.now();
   return (data ?? []).map((item) => ({
     ...item,
-    bucket: new Date(item.deliver_at).getTime() <= nowMs
+    bucket: item.priority === "urgent" || new Date(item.deliver_at).getTime() <= nowMs
       ? "urgent"
       : localParts(item.deliver_at, profile.timezone).date === today
         ? "today"
@@ -278,7 +278,12 @@ export async function actOnNotification(
   if (notificationError) throw notificationError;
 
   if (reminder) {
-    const next = nextOccurrenceInTimezone(reminder.next_occurrence_at, reminder.recurrence, reminder.recurrence_interval, profile.timezone);
+    let next = nextOccurrenceInTimezone(reminder.next_occurrence_at, reminder.recurrence, reminder.recurrence_interval, profile.timezone);
+    let guard = 0;
+    while (next && new Date(next).getTime() <= Date.now() && guard < 100) {
+      next = nextOccurrenceInTimezone(next, reminder.recurrence, reminder.recurrence_interval, profile.timezone);
+      guard += 1;
+    }
     const patch = next
       ? { next_occurrence_at: next, updated_at: new Date().toISOString() }
       : { active: false, updated_at: new Date().toISOString() };
@@ -470,7 +475,7 @@ export async function getReview(db: LifeDb, userId: string, kind: "morning" | "e
       payments_or_reminders: notifications.filter((item) => {
         const relation = item.reminders as unknown;
         const reminder = (Array.isArray(relation) ? relation[0] : relation) as { category?: string } | null;
-        return reminder?.category === "payment" || item.bucket === "today";
+        return item.bucket === "urgent" || item.bucket === "today";
       }).slice(0, 5),
     };
   }
@@ -497,7 +502,7 @@ export async function getReview(db: LifeDb, userId: string, kind: "morning" | "e
     db.from("tasks").select("id,title,area,due_date,priority,parent_task_id").eq("user_id", userId).neq("status", "done").neq("status", "cancelled").lt("due_date", today).order("due_date").limit(100),
     db.from("tasks").select("id,title,area,status,updated_at").eq("user_id", userId).eq("is_project", true).neq("status", "done").lt("updated_at", staleBefore).order("updated_at").limit(50),
     db.from("goals").select("id,title,target_date,status").eq("user_id", userId).eq("status", "active").limit(100),
-    db.from("tasks").select("id,goal_id,status").eq("user_id", userId).neq("status", "done").not("goal_id", "is", null).limit(500),
+    db.from("tasks").select("id,goal_id,status").eq("user_id", userId).neq("status", "done").neq("status", "cancelled").not("goal_id", "is", null).limit(500),
   ]);
   const firstError = [inbox, overdue, projects, goals, goalTasks].find((item) => item.error)?.error;
   if (firstError) throw firstError;
