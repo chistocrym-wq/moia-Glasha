@@ -13,6 +13,7 @@ export type DocumentOwner = "user" | "child" | "mother" | "work" | "other";
 export type DocumentUploadMetadata = {
   title: string;
   ownerPerson: DocumentOwner;
+  ownerName?: string;
   documentType: string;
   expiryDate?: string;
   tags?: string[];
@@ -22,6 +23,7 @@ export type UploadedDocument = {
   id: string;
   title: string;
   owner_person: string;
+  owner_name: string | null;
   document_type: string;
   expiry_date: string | null;
   tags: string[];
@@ -207,6 +209,7 @@ export async function uploadDocumentDirect(
       .insert({
         user_id: userId,
         owner_person: metadata.ownerPerson,
+        owner_name: metadata.ownerName?.trim() || null,
         document_type: documentType,
         title,
         expiry_date: metadata.expiryDate || null,
@@ -215,7 +218,7 @@ export async function uploadDocumentDirect(
         mime_type: file.type || null,
         size_bytes: file.size,
       })
-      .select("id,title,owner_person,document_type,expiry_date,tags,storage_path,mime_type,size_bytes,created_at")
+      .select("id,title,owner_person,owner_name,document_type,expiry_date,tags,storage_path,mime_type,size_bytes,created_at")
       .single();
 
     if (metadataError) {
