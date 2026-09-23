@@ -13,6 +13,9 @@ export type DeterministicRoute =
   | { kind: "search_tickets"; from: string; to: string; dateToken: string; afterTime: string | null }
   | { kind: "move_task"; taskQuery: string | null; area: "personal" | "work" }
   | { kind: "split_task"; taskQuery: string }
+  | { kind: "create_reminder"; title: string; dateToken: string; time: string; recurrence: "none" | "daily" | "weekly" | "monthly" }
+  | { kind: "query_overdue" }
+  | { kind: "global_search"; query: string }
   | { kind: "advice"; goalTitle: string | null; explicitDeep: boolean };
 
 const CATEGORY_HINTS: Array<[RegExp, string]> = [
@@ -190,6 +193,30 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
     };
   }
 
+  if (/^(?:глаша[,.]?\s*)?покажи\s+просроченн(?:ые|ое|ую|ый)(?:\s+задачи)?$/i.test(text)) {
+    return { kind: "query_overdue" };
+  }
+
+  if (/^(?:глаша[,.]?\s*)?(?:напомни|напоминай)\b/i.test(text)) {
+    const recurrence =
+      /кажд(?:ый|ую)\s+день|ежеднев/i.test(text) ? "daily" :
+      /кажд(?:ую|ой)\s+недел|еженедел/i.test(text) ? "weekly" :
+      /кажд(?:ый|ую)\s+месяц|ежемесяч/i.test(text) ? "monthly" :
+      "none";
+    const reminderDate = dateToken(text) || (recurrence !== "none" ? "today" : null);
+    const reminderTime = timeToken(text);
+    if (reminderDate && reminderTime) {
+      const title = tidy(text
+        .replace(/^(?:глаша[,.]?\s*)?(?:напомни|напоминай)\s*/i, "")
+        .replace(/(?:^|\s)(?:сегодня|завтра)(?=\s|$)/ig, " ")
+        .replace(/(?:^|\s)(?:в\s+)?(?:понедельник|понедельника|вторник|вторника|среду|среда|четверг|четверга|пятницу|пятница|субботу|суббота|воскресенье)(?=\s|$)/ig, " ")
+        .replace(/кажд(?:ый|ую|ой)\s+(?:день|недел\w*|месяц)|ежеднев\w*|еженедел\w*|ежемесяч\w*/ig, " ")
+        .replace(/(?:^|\s)в\s+([01]?\d|2[0-3])(?::[0-5]\d)?(?=\s|$|[,.!?])/ig, " ")
+        .replace(/\s+/g, " "));
+      if (title) return { kind: "create_reminder", title, dateToken: reminderDate, time: reminderTime, recurrence };
+    }
+  }
+
   const expense = text.match(/(?:потратил[аи]?|заплатил[аи]?|расход(?:ы)?)[^\d]{0,24}(\d+(?:[.,]\d{1,2})?)\s*(?:₽|р\.?|руб(?:ль|ля|лей)?\.?)?(?:\s+на)?\s+(.+)/i);
   if (expense) {
     const amount = Number(expense[1].replace(",", "."));
@@ -262,6 +289,11 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
         return { kind: "search_tickets", from, to: rest, dateToken: travelDate, afterTime };
       }
     }
+  }
+
+  if (/^(?:глаша[,.]?\s*)?(?:найди|поиск)\s+/i.test(text)) {
+    const query = tidy(text.replace(/^(?:глаша[,.]?\s*)?(?:найди|поиск)\s+/i, ""));
+    if (query) return { kind: "global_search", query };
   }
 
   if (hasAny(text, ["разбери мою неделю", "стратег", "план подготовки", "что мне сделать для моей цели"])) {
