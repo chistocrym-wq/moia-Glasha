@@ -151,7 +151,7 @@ export default function LifeOsHome({
     }
   }
 
-  async function notificationAction(id: string, action: "snooze" | "skip" | "done") {
+  async function notificationAction(id: string, action: "seen" | "snooze" | "skip" | "done") {
     try {
       await jsonFetch("/api/life/notifications", {
         method: "PATCH",
@@ -255,7 +255,7 @@ export default function LifeOsHome({
         <div className="panelHeader"><div><p className="eyebrow">Центр уведомлений</p><h3>Urgent · Today · Later</h3></div></div>
         {(["urgent","today","later"] as const).map((bucket) => grouped[bucket].length > 0 && <div className="notificationGroup" key={bucket}>
           <b>{bucket === "urgent" ? "Срочно" : bucket === "today" ? "Сегодня" : "Позже"}</b>
-          {grouped[bucket].map((item) => <div className="notificationCard" key={item.id}><div><strong>{item.title}</strong><small>{when(item.deliver_at)}</small></div><div className="rowActions"><button onClick={() => void notificationAction(item.id,"snooze")}>+1ч</button><button onClick={() => void notificationAction(item.id,"skip")}>Пропустить</button><button onClick={() => void notificationAction(item.id,"done")}>Готово</button></div></div>)}
+          {grouped[bucket].map((item) => <div className="notificationCard" key={item.id}><div><strong>{item.title}</strong><small>{when(item.deliver_at)}</small></div><div className="rowActions">{item.state === "unread" && <button onClick={() => void notificationAction(item.id,"seen")}>Просмотрено</button>}<button onClick={() => void notificationAction(item.id,"snooze")}>+1ч</button><button onClick={() => void notificationAction(item.id,"skip")}>Пропустить</button><button onClick={() => void notificationAction(item.id,"done")}>Готово</button></div></div>)}
         </div>)}
         {!notifications.length && <p className="muted">Активных уведомлений нет.</p>}
       </section>
