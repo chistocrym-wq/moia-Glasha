@@ -11,6 +11,8 @@ export type DeterministicRoute =
   | { kind: "cycle_start"; dateToken: string }
   | { kind: "check_availability"; dateToken: string; time: string; durationMinutes: number }
   | { kind: "search_tickets"; from: string; to: string; dateToken: string; afterTime: string | null }
+  | { kind: "move_task"; taskQuery: string | null; area: "personal" | "work" }
+  | { kind: "split_task"; taskQuery: string }
   | { kind: "advice"; goalTitle: string | null; explicitDeep: boolean };
 
 const CATEGORY_HINTS: Array<[RegExp, string]> = [
@@ -121,8 +123,30 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
   if (!text) return null;
 
   if (/^(?:глаша[,.]?\s*)?(?:открой|открыть)(?:\s|$)/i.test(text)) {
-    const service = serviceFromText(text);
+    const service = serviceFromText(text)
+      || tidy(text.replace(/^(?:глаша[,.]?\s*)?(?:открой|открыть)\s*/i, ""));
     if (service) return { kind: "open_service", service };
+  }
+
+  const moveNamed = text.match(/^(?:глаша[,.]?\s*)?(?:перенеси|перемести)\s+(?:задачу\s+)?(?:про\s+)?(.+?)\s+(?:в|на)\s+(работу|рабочее|рабочие|личное|личные)(?:\s+дела)?$/i);
+  if (moveNamed) {
+    return {
+      kind: "move_task",
+      taskQuery: tidy(moveNamed[1].replace(/^["«]|["»]$/g, "")),
+      area: /работ/i.test(moveNamed[2]) ? "work" : "personal",
+    };
+  }
+
+  if (/^это\s+(?:точно\s+)?личн(?:ое|ая|ый)(?:\s*,?\s*а\s+не\s+рабоч(?:ее|ая|ий))?$/i.test(text)) {
+    return { kind: "move_task", taskQuery: null, area: "personal" };
+  }
+  if (/^это\s+(?:точно\s+)?рабоч(?:ее|ая|ий)(?:\s*,?\s*а\s+не\s+личн(?:ое|ая|ый))?$/i.test(text)) {
+    return { kind: "move_task", taskQuery: null, area: "work" };
+  }
+
+  const splitTask = text.match(/^(?:глаша[,.]?\s*)?(?:разбей|разложи)\s+(?:задачу\s+)?["«]?(.+?)["»]?\s+(?:на\s+)?(?:этапы|шаги|подзадачи)$/i);
+  if (splitTask) {
+    return { kind: "split_task", taskQuery: tidy(splitTask[1]) };
   }
 
   if (
