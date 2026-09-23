@@ -875,7 +875,7 @@ async function openService(rt: Runtime, serviceName: string) {
       normalize(item.display_name) === wanted ||
       normalize(item.display_name).includes(wanted) ||
       wanted.includes(normalize(item.display_name)) ||
-      aliases.some((alias) => normalize(alias) === wanted || normalize(alias).includes(wanted) || wanted.includes(normalize(alias)));
+      aliases.some((alias: string) => normalize(alias) === wanted || normalize(alias).includes(wanted) || wanted.includes(normalize(alias)));
   });
   if (!connection) return { reply: "Такого приложения в «Подключениях» пока нет." };
   if (!connection.enabled) return { reply: `${connection.display_name} скрыто в «Подключениях». Включи его, чтобы открывать командой.` };
