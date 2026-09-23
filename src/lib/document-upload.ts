@@ -199,6 +199,7 @@ export async function uploadDocumentDirect(
       const { error: rollbackError } = await supabase.storage
         .from(DOCUMENT_BUCKET)
         .remove([storagePath]);
+      uploaded = false;
       if (rollbackError) {
         console.error("document_metadata_rollback_failed", {
           code: rollbackError.name,
@@ -207,7 +208,7 @@ export async function uploadDocumentDirect(
         });
       }
       throw new DocumentUploadError(
-        metadataError.code || "document_metadata_failed",
+        `metadata_${metadataError.code || "failed"}`,
         `Файл загрузился, но карточка документа не сохранилась: ${metadataError.message}`,
       );
     }
