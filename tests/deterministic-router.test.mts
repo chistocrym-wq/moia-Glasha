@@ -20,6 +20,10 @@ const cases = [
   ["Напомни завтра в 10 оплатить интернет", "create_reminder"],
   ["Покажи просроченные", "query_overdue"],
   ["Найди проект Переезд", "global_search"],
+  ["Отметь задачу Подать документы выполненной", "complete_task"],
+  ["Верни задачу Подать документы в дела", "restore_task"],
+  ["Покажи мои достижения", "query_achievements"],
+  ["Что я сделала за последние 14 дней?", "query_achievements"],
 ] as const;
 
 for (const [text, expected] of cases) {
@@ -79,3 +83,12 @@ if (reminder?.kind === "create_reminder") {
 const recurring = deterministicRoute("Напоминай каждый день в 09:00 пить витамины");
 assert.equal(recurring?.kind, "create_reminder");
 if (recurring?.kind === "create_reminder") assert.equal(recurring.recurrence, "daily");
+
+
+const completed = deterministicRoute("Отметь задачу Подать документы выполненной");
+assert.equal(completed?.kind, "complete_task");
+if (completed?.kind === "complete_task") assert.equal(completed.taskQuery, "Подать документы");
+
+const restored = deterministicRoute("Верни задачу Подать документы в дела");
+assert.equal(restored?.kind, "restore_task");
+if (restored?.kind === "restore_task") assert.equal(restored.taskQuery, "Подать документы");
