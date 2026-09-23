@@ -1,6 +1,12 @@
 -- LIFE OS Phase 1 foundation
 -- Additive preview-first migration. Do not apply to production before Controller E2E approval.
 
+alter table public.tasks
+  add column if not exists completed_at timestamptz;
+
+create index if not exists tasks_user_completed_idx on public.tasks(user_id, completed_at desc)
+  where completed_at is not null;
+
 alter table public.profiles
   add column if not exists quiet_hours_enabled boolean not null default false,
   add column if not exists quiet_hours_start time not null default '22:00',
