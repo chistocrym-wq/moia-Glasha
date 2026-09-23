@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { nextOccurrence, localTimeFallsInQuietHours, type Recurrence } from "@/lib/life-os";
+import { localTimeFallsInQuietHours, type Recurrence } from "@/lib/life-os";
 
 export type LifeDb = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -193,6 +193,33 @@ export async function createReminder(db: LifeDb, userId: string, input: Reminder
   return data;
 }
 
+function nextOccurrenceInTimezone(
+  currentIso: string,
+  recurrence: Recurrence,
+  interval: number,
+  timezone: string,
+) {
+  if (recurrence === "none") return null;
+  const current = localParts(currentIso, timezone);
+  const [year, month, day] = current.date.split("-").map(Number);
+  const [hour, minute] = current.time.split(":").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+
+  if (recurrence === "daily") next.setUTCDate(next.getUTCDate() + interval);
+  if (recurrence === "weekly") next.setUTCDate(next.getUTCDate() + 7 * interval);
+  if (recurrence === "monthly") {
+    const originalDay = next.getUTCDate();
+    next.setUTCDate(1);
+    next.setUTCMonth(next.getUTCMonth() + interval);
+    const lastDay = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+    next.setUTCDate(Math.min(originalDay, lastDay));
+  }
+
+  const nextDate = next.toISOString().slice(0, 10);
+  const nextTime = `${String(next.getUTCHours()).padStart(2, "0")}:${String(next.getUTCMinutes()).padStart(2, "0")}`;
+  return zonedDateTimeToUtc(nextDate, nextTime, timezone).toISOString();
+}
+
 export async function actOnNotification(
   db: LifeDb,
   userId: string,
@@ -200,6 +227,7 @@ export async function actOnNotification(
   action: "seen" | "snooze" | "skip" | "done",
   snoozeMinutes = 60,
 ) {
+  const profile = await getProfile(db, userId);
   const { data: notification, error } = await db
     .from("notifications")
     .select("id,reminder_id,scheduled_for,state,reminders(id,recurrence,recurrence_interval,next_occurrence_at,active)")
@@ -250,7 +278,7 @@ export async function actOnNotification(
   if (notificationError) throw notificationError;
 
   if (reminder) {
-    const next = nextOccurrence(reminder.next_occurrence_at, reminder.recurrence, reminder.recurrence_interval);
+    const next = nextOccurrenceInTimezone(reminder.next_occurrence_at, reminder.recurrence, reminder.recurrence_interval, profile.timezone);
     const patch = next
       ? { next_occurrence_at: next, updated_at: new Date().toISOString() }
       : { active: false, updated_at: new Date().toISOString() };
@@ -278,7 +306,7 @@ export async function searchLife(db: LifeDb, userId: string, rawQuery: string) {
     db.from("documents").select("id,title,document_type,owner_person,expiry_date").eq("user_id", userId).ilike("title", pattern).limit(12),
     db.from("contacts").select("id,name,relation,phone,email").eq("user_id", userId).ilike("name", pattern).limit(12),
     db.from("inbox_entries").select("id,text,created_at,processed").eq("user_id", userId).ilike("text", pattern).limit(12),
-    db.from("memories").select("id,title,kind,happened_at").eq("user_id", userId).ilike("title", pattern).limit(12),
+    db.from("memories").select("id,title,kind,happened_at").eq("user_id", userId).or(`title.ilike.${pattern},body.ilike.${pattern}`).limit(12),
   ]);
 
   const firstError = [tasks, goals, events, documents, contacts, inbox, memories].find((item) => item.error)?.error;
