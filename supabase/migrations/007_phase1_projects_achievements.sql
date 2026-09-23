@@ -213,7 +213,62 @@ begin
 end;
 $$;
 
+create or replace function public.glasha_list_root_tasks()
+returns table(
+  id uuid,
+  title text,
+  area text,
+  status text,
+  due_date date,
+  due_time time,
+  reminder_at timestamptz,
+  priority text,
+  goal_id uuid,
+  goal_title text,
+  parent_task_id uuid,
+  is_project boolean,
+  completed_at timestamptz,
+  completed_subtasks bigint,
+  total_subtasks bigint
+)
+language sql
+stable
+security invoker
+set search_path = public
+as $
+  select
+    p.id,
+    p.title,
+    p.area,
+    p.status,
+    p.due_date,
+    p.due_time,
+    p.reminder_at,
+    p.priority,
+    p.goal_id,
+    g.title as goal_title,
+    p.parent_task_id,
+    p.is_project,
+    p.completed_at,
+    count(c.id) filter (where c.status = 'done') as completed_subtasks,
+    count(c.id) filter (where c.status <> 'cancelled') as total_subtasks
+  from public.tasks p
+  left join public.tasks c
+    on c.parent_task_id = p.id
+   and c.user_id = p.user_id
+  left join public.goals g
+    on g.id = p.goal_id
+   and g.user_id = p.user_id
+  where p.user_id = auth.uid()
+    and p.parent_task_id is null
+    and p.status <> 'cancelled'
+  group by p.id,g.title
+  order by p.due_date asc nulls last,p.due_time asc nulls last,p.created_at desc;
+$;
+
 revoke all on function public.glasha_guard_parent_completion() from public,anon,authenticated;
 revoke all on function public.glasha_sync_parent_progress() from public,anon,authenticated;
 revoke all on function public.glasha_move_task_area(uuid,text,boolean) from public,anon;
+revoke all on function public.glasha_list_root_tasks() from public,anon;
 grant execute on function public.glasha_move_task_area(uuid,text,boolean) to authenticated;
+grant execute on function public.glasha_list_root_tasks() to authenticated;
