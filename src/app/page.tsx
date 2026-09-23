@@ -6,6 +6,7 @@ import { InstallGlashaTile } from "@/components/PwaClient";
 import LifeOsHome from "@/components/LifeOsHome";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { deterministicRoute } from "@/lib/deterministic-router";
+import { speechText } from "@/lib/voice-output";
 import {
   askAdvisor,
   getSystemStatus,
@@ -23,7 +24,7 @@ import {
 } from "@/lib/document-upload";
 
 type SectionId =
-  | "home" | "tasks" | "work" | "calendar" | "finance" | "health"
+  | "home" | "tasks" | "work" | "calendar" | "achievements" | "finance" | "health"
   | "goals" | "learning" | "travel" | "documents" | "contacts" | "connections" | "quick" | "advisor" | "chat";
 
 type Task = {
@@ -39,6 +40,7 @@ type Task = {
   goalTitle?: string;
   parentTaskId?: string;
   isProject?: boolean;
+  completedAt?: string;
 };
 
 type Expense = {
@@ -79,6 +81,7 @@ const sections: Array<{ id: SectionId; label: string; icon: string; subtitle: st
   { id: "tasks", label: "Мои дела", icon: "✓", subtitle: "Личное и бытовое", image: "cooking" },
   { id: "work", label: "Работа", icon: "▣", subtitle: "Проекты и задачи", image: "work" },
   { id: "calendar", label: "Календарь", icon: "◫", subtitle: "События и напоминания", image: "travel" },
+  { id: "achievements", label: "Мои достижения", icon: "★", subtitle: "Выполненное за 14 дней", image: "ideas" },
   { id: "finance", label: "Финансы", icon: "₽", subtitle: "Расходы по категориям", image: "documents" },
   { id: "health", label: "Здоровье", icon: "♡", subtitle: "Самочувствие и цикл", image: "health" },
   { id: "goals", label: "Мечты и цели", icon: "☆", subtitle: "Хочу и к чему иду", image: "ideas" },
@@ -156,12 +159,43 @@ export default function Home() {
   const [advisorQuestion, setAdvisorQuestion] = useState("");
   const [advisorAnswer, setAdvisorAnswer] = useState("");
   const [advisorBusy, setAdvisorBusy] = useState(false);
+  const [voiceReplies, setVoiceReplies] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const voiceChunksRef = useRef<BlobPart[]>([]);
 
   const current = sections.find((item) => item.id === active) ?? sections[0];
   const liveData = authState === "signed_in" && Boolean(userId);
+
+  useEffect(() => {
+    try { setVoiceReplies(window.localStorage.getItem("glasha_voice_replies") === "1"); } catch { /* localStorage may be unavailable */ }
+    return () => { if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel(); };
+  }, []);
+
+  function stopSpeaking() {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    setSpeaking(false);
+  }
+
+  function speakReply(value: string) {
+    const safe = speechText(value);
+    if (!safe || typeof window === "undefined" || !("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return false;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(safe);
+    utterance.lang = "ru-RU";
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+    return true;
+  }
+
+  function toggleVoiceReplies(enabled: boolean) {
+    setVoiceReplies(enabled);
+    try { window.localStorage.setItem("glasha_voice_replies", enabled ? "1" : "0"); } catch { /* preference remains in memory */ }
+    if (!enabled) stopSpeaking();
+  }
 
   function normalizeConnectionName(value?: string) {
     return String(value || "").trim().toLocaleLowerCase("ru-RU");
@@ -311,7 +345,7 @@ export default function Home() {
       taskRes, taskGoalRes, eventRes, eventAreaRes, expenseRes, noteRes, goalRes, healthRes,
       categoryRes, profileRes, documentRes, contactRes, connectionRes
     ] = await Promise.all([
-      supabase.from("tasks").select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project").eq("user_id", userId).order("due_date", { ascending: true }),
+      supabase.from("tasks").select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at").eq("user_id", userId).order("due_date", { ascending: true }),
       supabase.from("tasks").select("id,goal_id,goals(title)").eq("user_id", userId),
       supabase.from("calendar_events").select("id,title,start_at,kind").eq("user_id", userId).order("start_at", { ascending: true }).limit(100),
       supabase.from("calendar_events").select("id,area,end_at").eq("user_id", userId).limit(100),
@@ -349,6 +383,7 @@ export default function Home() {
         goalTitle: goal?.title || undefined,
         parentTaskId: row.parent_task_id || undefined,
         isProject: Boolean(row.is_project),
+        completedAt: row.completed_at || undefined,
       };
     }));
 
@@ -445,7 +480,7 @@ export default function Home() {
   async function refreshTasksOnly() {
     if (!supabase || !userId) return;
     const { data, error } = await supabase.from("tasks")
-      .select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,goals(title)")
+      .select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at,goals(title)")
       .eq("user_id", userId)
       .order("due_date", { ascending: true });
     if (error) {
@@ -468,6 +503,7 @@ export default function Home() {
         goalTitle: goal?.title || undefined,
         parentTaskId: row.parent_task_id || undefined,
         isProject: Boolean(row.is_project),
+        completedAt: row.completed_at || undefined,
       };
     }));
   }
@@ -565,7 +601,7 @@ export default function Home() {
 
   async function refreshAfterAssistantAction(action?: string) {
     if (!action) return;
-    if (action === "create_task" || action === "move_task" || action === "split_task") return refreshTasksOnly();
+    if (action === "create_task" || action === "move_task" || action === "split_task" || action === "complete_task" || action === "restore_task" || action === "query_achievements") return refreshTasksOnly();
     if (action === "create_expense") return refreshExpensesOnly();
     if (action === "create_event" || action === "create_appointment" || action === "log_health" || action === "log_fitness" || action === "cycle_start") {
       return refreshEventsAndHealth();
@@ -599,6 +635,7 @@ export default function Home() {
 
   async function signOut() {
     if (!supabase) return;
+    stopSpeaking();
     await supabase.auth.signOut();
     setUserId(null);
     setAuthState("signed_out");
@@ -608,6 +645,18 @@ export default function Home() {
   async function processCommand(raw: string, source: "text" | "voice" = "text") {
     const text = raw.trim();
     if (!text) return;
+    stopSpeaking();
+
+    if (/^(?:глаша[,.]?\s*)?(?:стоп|останови\s+озвучку|замолчи)$/i.test(text)) {
+      if (liveData) void logLocalRoute("voice_stop", Date.now());
+      return;
+    }
+    if (/^(?:глаша[,.]?\s*)?(?:прочитай\s+ответ|озвучь\s+ответ)$/i.test(text)) {
+      const spoken = speakReply(answer);
+      if (!spoken) setAnswer("Этот ответ нельзя безопасно озвучить или браузер не поддерживает озвучивание.");
+      if (liveData) void logLocalRoute("voice_read_answer", Date.now());
+      return;
+    }
 
     if (!liveData) {
       setAnswer("Эта команда уже переведена на настоящий backend, но сейчас backend ещё не подключён к твоему аккаунту.");
@@ -625,13 +674,13 @@ export default function Home() {
         return;
       }
       const opened = openConnectionTarget(connection);
-      setAnswer(
-        connection.capability === "OPEN_ONLY"
-          ? `Открываю ${connection.displayName}. Это только запуск приложения/сайта — аккаунт к Глаше не подключён.`
-          : opened
-            ? `Открываю ${connection.displayName}. Возможность: ${connection.capability}.`
-            : `Для ${connection.displayName} пока нет рабочей ссылки.`
-      );
+      const reply = connection.capability === "OPEN_ONLY"
+        ? `Открываю ${connection.displayName}. Это только запуск приложения/сайта — аккаунт к Глаше не подключён.`
+        : opened
+          ? `Открываю ${connection.displayName}. Возможность: ${connection.capability}.`
+          : `Для ${connection.displayName} пока нет рабочей ссылки.`;
+      setAnswer(reply);
+      if (voiceReplies) speakReply(reply);
       void logLocalRoute("open_service", localStartedAt);
       return;
     }
@@ -640,7 +689,9 @@ export default function Home() {
     setLastResult(null);
     try {
       const result = await sendAssistantCommand(text, source);
-      setAnswer(result.reply || "Готово.");
+      const reply = result.reply || "Готово.";
+      setAnswer(reply);
+      if (voiceReplies) speakReply(reply);
       setLastResult(result);
       if (result.action === "open_service" && Array.isArray(result.data)) {
         const row = result.data[0] as {
@@ -757,15 +808,18 @@ export default function Home() {
     }
     const task = tasks.find((item) => item.id === id);
     if (!task) return;
+    if (tasks.some((item) => item.parentTaskId === id) && !task.done) {
+      setAnswer("Крупная задача завершится автоматически, когда будут выполнены все её подзадачи.");
+      return;
+    }
     const nextStatus = task.done ? "todo" : "done";
-    const { error } = await supabase.from("tasks").update({
-      status: nextStatus,
-      completed_at: nextStatus === "done" ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
-    }).eq("id", id);
-    if (error) setAnswer("Не смогла изменить задачу.");
+    const { error } = await supabase.from("tasks")
+      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("id", id);
+    if (error) setAnswer(error.message.includes("project_has_incomplete_subtasks") ? "Сначала заверши все подзадачи проекта." : "Не смогла изменить задачу.");
     else {
-      setTasks((items) => items.map((item) => item.id === id ? { ...item, done: nextStatus === "done" } : item));
+      await refreshTasksOnly();
       setAnswer(nextStatus === "done" ? "Отметила как выполненное." : "Вернула задачу в работу.");
     }
   }
@@ -778,21 +832,35 @@ export default function Home() {
     const task = tasks.find((item) => item.id === id);
     if (!task || task.area === targetArea) return;
 
-    const { data, error } = await supabase.from("tasks")
-      .update({ area: targetArea === "Работа" ? "work" : "personal", updated_at: new Date().toISOString() })
-      .eq("user_id", userId)
-      .eq("id", id)
-      .select("id,area")
-      .single();
-
+    const { error } = await supabase.rpc("glasha_move_task_area", {
+      p_task_id: id,
+      p_area: targetArea === "Работа" ? "work" : "personal",
+      p_move_children: true,
+    });
     if (error) {
       console.error("move_task_failed", { code: error.code, message: error.message, taskId: id });
       setAnswer("Не получилось переместить задачу.");
       return;
     }
 
-    setTasks((items) => items.map((item) => item.id === data.id ? { ...item, area: data.area === "work" ? "Работа" : "Личное" } : item));
-    setAnswer(`Переместила «${task.title}» в «${targetArea}». Остальные данные задачи сохранены.`);
+    await refreshTasksOnly();
+    setAnswer(`Переместила «${task.title}» в «${targetArea}» вместе с подзадачами. ID и связи сохранены.`);
+  }
+
+  async function restoreTaskDirect(id: string) {
+    if (!liveData || id.startsWith("sample-")) return;
+    const response = await fetch("/api/life/tasks", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ id, action: "restore" }),
+    });
+    if (!response.ok) {
+      setAnswer("Не получилось вернуть задачу в дела.");
+      return;
+    }
+    await refreshTasksOnly();
+    setAnswer("Вернула задачу в дела без создания копии.");
   }
 
   async function addSubtask(parentId: string) {
@@ -815,7 +883,7 @@ export default function Home() {
       status: "todo",
       goal_id: parent.goalId || null,
       source: "manual",
-    }).select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project").single();
+    }).select("id,title,area,status,due_date,due_time,reminder_at,priority,goal_id,parent_task_id,is_project,completed_at").single();
 
     if (error) {
       console.error("add_subtask_failed", { code: error.code, message: error.message, parentId });
@@ -829,22 +897,7 @@ export default function Home() {
       .eq("id", parent.id);
     if (projectError) console.error("mark_project_failed", { code: projectError.code, message: projectError.message, parentId });
 
-    setTasks((items) => [
-      ...items.map((item) => item.id === parent.id ? { ...item, isProject: true } : item),
-      {
-        id: data.id,
-        title: data.title,
-        area: data.area === "work" ? "Работа" : "Личное",
-        done: data.status === "done",
-        dueDate: data.due_date || undefined,
-        time: data.due_time ? String(data.due_time).slice(0, 5) : undefined,
-        reminderAt: data.reminder_at || undefined,
-        priority: data.priority || undefined,
-        goalId: data.goal_id || undefined,
-        parentTaskId: data.parent_task_id || undefined,
-        isProject: Boolean(data.is_project),
-      },
-    ]);
+    await refreshTasksOnly();
     setAnswer(`Добавила подзадачу «${data.title}».`);
   }
 
@@ -1239,6 +1292,11 @@ export default function Home() {
             <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Например: потратила 70 рублей на кофе…" disabled={busy}/>
             <button className="sendButton" disabled={busy}>{busy ? "Думаю…" : "Отправить"}</button>
           </form>
+          <div className="voiceReplyControls">
+            <label><input type="checkbox" checked={voiceReplies} onChange={(event) => toggleVoiceReplies(event.target.checked)} /> Глаша отвечает голосом</label>
+            {speaking && <button type="button" className="voiceStopButton" onClick={stopSpeaking}>■ Стоп</button>}
+            <button type="button" className="voiceReadButton" onClick={() => { if (!speakReply(answer)) setAnswer("Этот ответ нельзя безопасно озвучить или браузер не поддерживает озвучивание."); }}>Прочитать ответ</button>
+          </div>
           <div className="promptHints">
             <button onClick={() => setCommand("Потратила 70 рублей на кофе")}>+ расход</button>
             <button onClick={() => setCommand("Завтра по работе позвонить бухгалтеру")}>+ работа</button>
@@ -1248,7 +1306,7 @@ export default function Home() {
           {lastResult && <ResultPreview result={lastResult}/>}
         </div><div className="heroGlasha"><GlashaCharacter image="home" priority className="heroCharacter" alt="Глаша рядом" /><span className="speechBubble">Я рядом ♡</span></div></section>
 
-        <LifeOsHome liveData={liveData} refreshToken={answer} onCommand={processCommand} />
+        <LifeOsHome liveData={liveData} refreshToken={answer} onCommand={processCommand} onOpenSection={setActive} />
       </> : <SectionContent
         active={active}
         currentImage={current.image}
@@ -1285,6 +1343,8 @@ export default function Home() {
         onSaveDocument={saveDocumentToArchive}
         onOpenDocument={openDocumentFromArchive}
         onCommand={processCommand}
+        onRestoreTask={restoreTaskDirect}
+        onOpenSection={setActive}
       />}
     </section>
 
@@ -1465,7 +1525,7 @@ function SectionContent({
   active, currentImage, tasks, events, expenses, notes, goals, healthEvents, categories, documents, contacts, connections, liveData, totalText,
   advisorQuestion, advisorAnswer, advisorBusy, onAdvisorQuestion, onSubmitAdvisor,
   onToggleTask, onMoveTask, onAddSubtask, onSplitTask, onAddTask, onAddExpense, onAddGoal, onAttachTask, onAddContact,
-  onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand,
+  onOpenConnection, onToggleConnection, onRenameConnection, onImportConnections, onSaveDocument, onOpenDocument, onCommand, onRestoreTask, onOpenSection,
 }: {
   active: SectionId;
   currentImage: GlashaImage;
@@ -1502,6 +1562,8 @@ function SectionContent({
   onSaveDocument: (file: File, metadata: DocumentUploadMetadata, onProgress?: (percent: number) => void) => Promise<void>;
   onOpenDocument: (id: string) => void;
   onCommand: (text: string, source?: "text" | "voice") => void;
+  onRestoreTask: (id: string) => void;
+  onOpenSection: (id: SectionId) => void;
 }) {
   const [calendarFilter, setCalendarFilter] = useState<"all" | "personal" | "work" | "health" | "goals" | "travel">("all");
   const latestCycle = healthEvents.find((item) => item.kind === "cycle_start");
@@ -1696,6 +1758,7 @@ function headline(id: SectionId) {
     tasks: "Ничего не держим в голове",
     work: "Помню, где мы остановились",
     calendar: "Все даты в одном месте",
+    achievements: "Готовое тоже должно быть видно",
     finance: "Деньги без тумана",
     health: "Забота о себе тоже дело",
     goals: "Мечты превращаем в шаги",
@@ -1716,6 +1779,7 @@ function description(id: SectionId) {
     tasks: "Личные и рабочие дела можно смотреть вместе или отдельно.",
     work: "Задачи, дедлайны и документы к ним — в одном рабочем контексте.",
     calendar: "Напоминания, встречи, дни рождения, здоровье и поездки.",
+    achievements: "Завершённые крупные задачи видны 14 дней, затем остаются в архиве для истории.",
     finance: "Говори сумму и назначение — Глаша распределит расход по категории.",
     health: "Самочувствие, цикл, врачи, лекарства и заметки.",
     goals: "Мечта может остаться мечтой или превратиться в цель с датой и шагами.",
