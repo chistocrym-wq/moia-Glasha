@@ -12,6 +12,9 @@ export type DeterministicRoute =
   | { kind: "check_availability"; dateToken: string; time: string; durationMinutes: number }
   | { kind: "search_tickets"; from: string; to: string; dateToken: string; afterTime: string | null }
   | { kind: "move_task"; taskQuery: string | null; area: "personal" | "work" }
+  | { kind: "complete_task"; taskQuery: string }
+  | { kind: "restore_task"; taskQuery: string }
+  | { kind: "query_achievements" }
   | { kind: "split_task"; taskQuery: string }
   | { kind: "create_reminder"; title: string; dateToken: string; time: string; recurrence: "none" | "daily" | "weekly" | "monthly" }
   | { kind: "query_overdue" }
@@ -124,6 +127,22 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
   const text = tidy(input);
   const value = lower(text);
   if (!text) return null;
+
+  if (/^(?:глаша[,.]?\s*)?(?:покажи\s+мои\s+достижения|покажи\s+достижения|что\s+я\s+сделал[аи]?\s+за\s+последн(?:ие|их)\s+14\s+дн(?:ей|я))$/i.test(text)) {
+    return { kind: "query_achievements" };
+  }
+
+  const completeTask = text.match(/^(?:глаша[,.]?\s*)?(?:отметь|пометь)\s+(?:задачу\s+)?[«"]?(.+?)[»"]?\s+(?:как\s+)?выполненн(?:ой|ую)|^(?:глаша[,.]?\s*)?(?:заверши|выполни)\s+(?:задачу\s+)?[«"]?(.+?)[»"]?$/i);
+  if (completeTask) {
+    const taskQuery = tidy((completeTask[1] || completeTask[2] || "").replace(/^["«]|["»]$/g, ""));
+    if (taskQuery) return { kind: "complete_task", taskQuery };
+  }
+
+  const restoreTask = text.match(/^(?:глаша[,.]?\s*)?(?:верни|возврати)\s+(?:задачу\s+)?[«"]?(.+?)[»"]?\s+(?:обратно\s+)?(?:в\s+)?дела$/i);
+  if (restoreTask) {
+    const taskQuery = tidy(restoreTask[1].replace(/^["«]|["»]$/g, ""));
+    if (taskQuery) return { kind: "restore_task", taskQuery };
+  }
 
   if (/^(?:глаша[,.]?\s*)?(?:открой|открыть)(?:\s|$)/i.test(text)) {
     const requested = tidy(text.replace(/^(?:глаша[,.]?\s*)?(?:открой|открыть)\s*/i, ""));
