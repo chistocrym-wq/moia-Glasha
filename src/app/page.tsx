@@ -1566,7 +1566,19 @@ function SectionContent({
   onOpenSection: (id: SectionId) => void;
 }) {
   const [calendarFilter, setCalendarFilter] = useState<"all" | "personal" | "work" | "health" | "goals" | "travel">("all");
+  const [achievementFilter, setAchievementFilter] = useState<"all" | "personal" | "work" | "projects">("all");
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(() => new Set());
   const latestCycle = healthEvents.find((item) => item.kind === "cycle_start");
+  const achievementWindowMs = 14 * 24 * 60 * 60 * 1000;
+  const completedRootTasks = tasks
+    .filter((task) => !task.parentTaskId && task.done && task.completedAt)
+    .sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
+  const achievementMatches = (task: Task) => achievementFilter === "all"
+    || (achievementFilter === "personal" && task.area === "Личное" && !task.isProject)
+    || (achievementFilter === "work" && task.area === "Работа" && !task.isProject)
+    || (achievementFilter === "projects" && Boolean(task.isProject));
+  const recentAchievements = completedRootTasks.filter((task) => Date.now() - new Date(task.completedAt || 0).getTime() < achievementWindowMs && achievementMatches(task));
+  const archivedAchievements = completedRootTasks.filter((task) => Date.now() - new Date(task.completedAt || 0).getTime() >= achievementWindowMs && achievementMatches(task));
   const categoryTotals = useMemo(() => {
     const totals: Record<string, Record<string, number>> = {};
     for (const expense of expenses) {
@@ -1577,6 +1589,7 @@ function SectionContent({
   }, [expenses]);
 
   const filteredTasks = tasks.filter((task) => {
+    if (task.parentTaskId || task.done) return false;
     if (calendarFilter === "all") return Boolean(task.dueDate);
     if (calendarFilter === "personal") return task.area === "Личное" && Boolean(task.dueDate);
     if (calendarFilter === "work") return task.area === "Работа" && Boolean(task.dueDate);
@@ -1617,35 +1630,69 @@ function SectionContent({
     return tasks.filter((task) => task.parentTaskId === parentId);
   }
 
+  function toggleExpandedTask(id: string) {
+    setExpandedTasks((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   function renderTaskTree(task: Task, depth = 0): React.ReactNode {
     const children = taskChildren(task.id);
     const completed = children.filter((child) => child.done).length;
     const total = children.length;
     const percent = total ? Math.round((completed / total) * 100) : 0;
+    const expanded = expandedTasks.has(task.id);
     const showInArea = active === "tasks" || task.area === "Работа";
 
     if (!showInArea && depth === 0) return null;
 
     return <div className={depth ? "taskTree nested" : "taskTree"} key={task.id}>
       <div className={`taskRow taskRowStatic ${task.done ? "done" : ""}`}>
-        <button className="checkButton" onClick={() => onToggleTask(task.id)}><span className="checkCircle">{task.done ? "✓" : ""}</span></button>
+        <button className={children.length ? "checkButton projectCheck" : "checkButton"} onClick={() => children.length ? toggleExpandedTask(task.id) : onToggleTask(task.id)} title={children.length ? "Открыть подзадачи" : task.done ? "Вернуть в работу" : "Отметить выполненной"}><span className="checkCircle">{task.done ? "✓" : ""}</span></button>
         <span className="taskText">
-          <b>{task.title}{children.length ? <span className="projectBadge">проект</span> : null}</b>
+          <b>{children.length ? <button type="button" className="taskTitleButton" onClick={() => toggleExpandedTask(task.id)} aria-expanded={expanded}>{task.title}<span className="projectBadge">проект</span><span className="taskExpandMark">{expanded ? "⌄" : "›"}</span></button> : task.title}</b>
           <small>{task.area}{task.dueDate ? ` · ${task.dueDate}` : ""}{task.time ? ` · ${task.time}` : ""}{task.priority ? ` · ${task.priority}` : ""}{task.goalTitle ? ` · цель: ${task.goalTitle}` : ""}</small>
           {total > 0 && <span className="projectProgress">
             <span><i style={{ width: `${percent}%` }} /></span>
-            <small>{completed}/{total} · {percent}%</small>
+            <small>{completed} из {total} выполнено · {percent}%</small>
           </span>}
         </span>
         <div className="taskActions">
-          <button className="miniTaskButton" onClick={() => onMoveTask(task.id, task.area === "Работа" ? "Личное" : "Работа")}>→ {task.area === "Работа" ? "Личное" : "Работа"}</button>
+          <button className="miniTaskButton" onClick={() => onMoveTask(task.id, task.area === "Работа" ? "Личное" : "Работа")}>Переместить → {task.area === "Работа" ? "Личное" : "Работа"}</button>
           {!children.length && <button className="miniTaskButton" onClick={() => onSplitTask(task.id)}>Разбить на шаги</button>}
           <button className="miniTaskButton" onClick={() => onAddSubtask(task.id)}>+ Подзадача</button>
           <button className="attachButton" onClick={() => onAttachTask(task.id)} title="Прикрепить документ">📎</button>
         </div>
       </div>
-      {children.length > 0 && <div className="taskChildren">{children.map((child) => renderTaskTree(child, depth + 1))}</div>}
+      {children.length > 0 && expanded && <div className="taskChildren">{children.map((child) => renderTaskTree(child, depth + 1))}</div>}
     </div>;
+  }
+
+  function renderAchievementCard(task: Task, archived = false) {
+    const children = taskChildren(task.id);
+    const completed = children.filter((child) => child.done).length;
+    const total = children.length;
+    const percent = total ? Math.round((completed / total) * 100) : 100;
+    const expanded = expandedTasks.has(task.id);
+
+    return <article className={archived ? "achievementCard archived" : "achievementCard"} key={task.id}>
+      <div className="achievementSummary">
+        <button type="button" className="achievementOpen" onClick={() => children.length && toggleExpandedTask(task.id)} aria-expanded={children.length ? expanded : undefined}>
+          <span className="achievementMark">✓</span>
+          <span className="achievementCopy">
+            <b>{task.title}</b>
+            <small>{task.area} · {task.isProject ? "Проект" : "Задача"}{task.completedAt ? ` · выполнено ${formatDateTime(task.completedAt)}` : ""}</small>
+            {total > 0 && <span className="projectProgress"><span><i style={{ width: `${percent}%` }} /></span><small>{completed} из {total} выполнено · {percent}%</small></span>}
+          </span>
+          {children.length > 0 && <span className="achievementChevron">{expanded ? "⌄" : "›"}</span>}
+        </button>
+        <button type="button" className="miniTaskButton achievementRestore" onClick={() => onRestoreTask(task.id)}>Вернуть в дела</button>
+      </div>
+      {children.length > 0 && expanded && <div className="achievementChildren">{children.map((child) => <div className="achievementChild" key={child.id}><span>{child.done ? "✓" : "○"}</span><div><b>{child.title}</b><small>{child.done ? "Выполнено" : "Не завершено"}{child.dueDate ? ` · ${child.dueDate}` : ""}{child.time ? ` · ${child.time}` : ""}</small></div></div>)}</div>}
+    </article>;
   }
 
   return <div className="sectionLayout">
@@ -1654,11 +1701,24 @@ function SectionContent({
     {(active === "tasks" || active === "work") && <section className="panel">
       <div className="panelHeader"><div><p className="eyebrow">{active === "work" ? "Работа" : "Личное + работа"}</p><h3>{active === "work" ? "Текущие задачи" : "Все дела"}</h3></div><button className="primaryButton" onClick={() => onAddTask(active === "work" ? "Работа" : "Личное")}>+ Добавить</button></div>
       <div className="taskList">
-        {tasks.filter((task) => !task.parentTaskId).map((task) => renderTaskTree(task))}
-        {active === "work" && tasks.filter((task) => task.parentTaskId && task.area === "Работа" && tasks.find((parent) => parent.id === task.parentTaskId)?.area !== "Работа").map((task) => renderTaskTree(task))}
+        {tasks.filter((task) => !task.parentTaskId && !task.done && (active === "tasks" || task.area === "Работа")).map((task) => renderTaskTree(task))}
+        {!tasks.some((task) => !task.parentTaskId && !task.done && (active === "tasks" || task.area === "Работа")) && <p className="muted">Активных крупных задач сейчас нет.</p>}
       </div>
       {!liveData && <p className="demoNote">Демо-данные. После входа здесь будут реальные задачи и вложения.</p>}
     </section>}
+
+    {active === "achievements" && <>
+      <section className="panel achievementsPanel">
+        <div className="panelHeader"><div><p className="eyebrow">Последние 14 дней</p><h3>Мои достижения</h3></div><span className="achievementCount">{recentAchievements.length}</span></div>
+        <div className="filterRow">{([["all","Все"],["personal","Личное"],["work","Работа"],["projects","Проекты"]] as const).map(([id,label]) => <button key={id} className={achievementFilter === id ? "filterChip active" : "filterChip"} onClick={() => setAchievementFilter(id)}>{label}</button>)}</div>
+        <p className="muted achievementIntro">Подзадачи хранятся внутри выполненного проекта и не создают отдельные карточки достижений.</p>
+        <div className="achievementList">{recentAchievements.length ? recentAchievements.map((task) => renderAchievementCard(task)) : <p className="muted">За выбранный период здесь пока пусто.</p>}</div>
+      </section>
+      <details className="panel achievementArchive">
+        <summary><span>Архив старше 14 дней</span><small>{archivedAchievements.length} задач</small></summary>
+        <div className="achievementList">{archivedAchievements.length ? archivedAchievements.map((task) => renderAchievementCard(task, true)) : <p className="muted">В архиве по этому фильтру пока пусто.</p>}</div>
+      </details>
+    </>}
 
     {active === "calendar" && <section className="panel">
       <div className="panelHeader"><div><p className="eyebrow">Единый календарь</p><h3>Задачи + события</h3></div><div className="calendarActions"><button className="linkButton" onClick={copyTasks} disabled={!tasksText}>Копировать задачи</button><button className="linkButton" onClick={copyPlan} disabled={!planText}>Копировать план</button><button className="linkButton" onClick={sharePlan} disabled={!planText}>Поделиться</button></div></div>
@@ -1745,7 +1805,7 @@ function SectionContent({
       <ConnectionsImportForm disabled={!liveData} onImport={onImportConnections} />
     </section>}
 
-    {active === "quick" && <div className="quickGrid"><InstallGlashaTile />{[["🏦","Банк"],["▣","Госуслуги"],["✉","Почта"],["◫","Календарь"],["✈","Tutu"],["⌖","Карты"],["文","Переводчик"],["💬","Telegram"]].map(([i,n]) => <button className="quickTile" key={n} onClick={() => onCommand(`Открой ${n}`)}><span>{i}</span><b>{n}</b></button>)}</div>}
+    {active === "quick" && <div className="quickGrid"><InstallGlashaTile /><button className="quickTile" onClick={() => onOpenSection("achievements")}><span>★</span><b>Мои достижения</b></button>{[["🏦","Банк"],["▣","Госуслуги"],["✉","Почта"],["◫","Календарь"],["✈","Tutu"],["⌖","Карты"],["文","Переводчик"],["💬","Telegram"]].map(([i,n]) => <button className="quickTile" key={n} onClick={() => onCommand(`Открой ${n}`)}><span>{i}</span><b>{n}</b></button>)}</div>}
 
     {active === "advisor" && <div className="twoColumns"><section className="panel"><h3>Спроси Советчика</h3><p className="muted">Он получает только релевантные задачи, цели, календарь или финансы. Для актуальных внешних данных может использовать web search.</p><form className="advisorForm" onSubmit={onSubmitAdvisor}><textarea value={advisorQuestion} onChange={(e) => onAdvisorQuestion(e.target.value)} placeholder="Например: что мне сделать на этой неделе для B1?"/><button className="primaryButton" disabled={advisorBusy}>{advisorBusy ? "Думаю…" : "Спросить"}</button></form></section><section className="panel advisorAnswer"><h3>Ответ</h3><p>{advisorAnswer || "Здесь появится ответ Советчика."}</p></section></div>}
 
