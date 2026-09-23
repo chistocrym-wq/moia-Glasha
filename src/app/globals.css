@@ -105,3 +105,15 @@ font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans
     .mobileNav{height:calc(72px + env(safe-area-inset-bottom));padding-bottom:max(10px,env(safe-area-inset-bottom))}
   }
 }
+
+
+/* Projects / task hierarchy */
+.taskTree{border-top:1px solid #f0f1f5}.taskTree:first-child{border-top:0}
+.taskTree .taskRow{border-top:0}.taskTree.nested{margin-left:30px;border-left:2px solid #eceafd;padding-left:12px}
+.taskActions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+.miniTaskButton{border:1px solid var(--line);background:#fff;border-radius:10px;padding:6px 8px;font-size:11px;font-weight:800;color:#6066c7;cursor:pointer}
+.miniTaskButton:hover{background:#f5f3ff}.projectBadge{display:inline-flex;margin-left:8px;padding:3px 6px;border-radius:999px;background:#f1efff;color:#5b60cb;font-size:9px;text-transform:uppercase;letter-spacing:.05em;vertical-align:middle}
+.projectProgress{display:flex;align-items:center;gap:8px;margin-top:7px}.projectProgress>span{display:block;width:120px;height:6px;background:#eceef5;border-radius:999px;overflow:hidden}.projectProgress i{display:block;height:100%;background:#5964ea;border-radius:inherit}.projectProgress small{margin:0!important}
+.taskChildren{display:grid}.connectionIcon{width:36px;height:36px;display:grid;place-items:center;border-radius:11px;background:#f5f4fb;font-size:18px;flex:0 0 auto}
+.connectionHidden{opacity:.55}.connectionsImport{margin-top:18px;padding:14px;border:1px dashed #dcddea;border-radius:16px;background:#fafafe}.connectionsImport summary{cursor:pointer;font-weight:800;color:#5b60cb}.connectionsImport form{display:grid;gap:10px;margin-top:12px}.connectionsImport textarea{width:100%;min-height:150px;resize:vertical;border:1px solid var(--line);border-radius:12px;padding:11px;font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;background:#fff}
+@media(max-width:760px){.taskTree.nested{margin-left:14px;padding-left:8px}.taskRow{grid-template-columns:auto 1fr}.taskActions{grid-column:2;justify-content:flex-start}.projectProgress>span{width:90px}.connectionRow{display:grid;grid-template-columns:auto 1fr auto}.connectionRow .rowActions{grid-column:2/-1}}
