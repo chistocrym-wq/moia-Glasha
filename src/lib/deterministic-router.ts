@@ -13,17 +13,6 @@ export type DeterministicRoute =
   | { kind: "search_tickets"; from: string; to: string; dateToken: string; afterTime: string | null }
   | { kind: "advice"; goalTitle: string | null; explicitDeep: boolean };
 
-const SERVICE_ALIASES: Array<[RegExp, string]> = [
-  [/\btutu\b|\bтуту\b/i, "tutu"],
-  [/telegram|телеграм/i, "telegram"],
-  [/яндекс\s*карт|\bкарт[ыау]?\b/i, "maps"],
-  [/переводчик/i, "translate"],
-  [/госуслуг/i, "gosuslugi"],
-  [/почт[ауые]/i, "mail"],
-  [/календар/i, "calendar"],
-  [/банк/i, "bank"],
-];
-
 const CATEGORY_HINTS: Array<[RegExp, string]> = [
   [/кофе|кафе|ресторан|обед|ужин/i, "coffee_cafes"],
   [/продукт|магазин|еда/i, "groceries"],
@@ -40,36 +29,46 @@ const CATEGORY_HINTS: Array<[RegExp, string]> = [
 ];
 
 const MONTHS: Record<string, number> = {
-  январ: 1, феврал: 2, март: 3, апрел: 4, ма: 5, июн: 6,
+  январ: 1, феврал: 2, март: 3, апрел: 4, май: 5, ма: 5, июн: 6,
   июл: 7, август: 8, сентябр: 9, октябр: 10, ноябр: 11, декабр: 12,
 };
 
-const WEEKDAYS: Record<string, number> = {
-  понедельник: 1, понедельника: 1,
-  вторник: 2, вторника: 2,
-  среда: 3, среду: 3, среды: 3,
-  четверг: 4, четверга: 4,
-  пятница: 5, пятницу: 5, пятницы: 5,
-  суббота: 6, субботу: 6, субботы: 6,
-  воскресенье: 0, воскресенья: 0,
-};
+const WEEKDAYS: Array<[string[], number]> = [
+  [["понедельник", "понедельника"], 1],
+  [["вторник", "вторника"], 2],
+  [["среда", "среду", "среды"], 3],
+  [["четверг", "четверга"], 4],
+  [["пятница", "пятницу", "пятницы"], 5],
+  [["суббота", "субботу", "субботы"], 6],
+  [["воскресенье", "воскресенья"], 0],
+];
 
 function tidy(value: string) {
   return value.trim().replace(/[.!?]+$/g, "").replace(/\s+/g, " ");
 }
 
+function lower(value: string) {
+  return value.toLocaleLowerCase("ru-RU");
+}
+
+function hasAny(text: string, parts: string[]) {
+  const value = lower(text);
+  return parts.some((part) => value.includes(part));
+}
+
 function dateToken(text: string) {
-  const lower = text.toLocaleLowerCase("ru-RU");
-  if (/\bсегодня\b/.test(lower)) return "today";
-  if (/\bзавтра\b/.test(lower)) return "tomorrow";
-  for (const name of Object.keys(WEEKDAYS)) {
-    if (new RegExp(`\\b${name}\\b`, "i").test(lower)) return name;
+  const value = lower(text);
+  if (value.includes("сегодня")) return "today";
+  if (value.includes("завтра")) return "tomorrow";
+  for (const [names] of WEEKDAYS) {
+    const found = names.find((name) => value.includes(name));
+    if (found) return found;
   }
   return null;
 }
 
 function timeToken(text: string) {
-  const match = text.match(/(?:\bв\s+|после\s+)([01]?\d|2[0-3])(?::([0-5]\d))?/i);
+  const match = text.match(/(?:^|\s)(?:в|после)\s+([01]?\d|2[0-3])(?::([0-5]\d))?(?=\s|$|[,.!?])/i);
   if (!match) return null;
   return `${String(Number(match[1])).padStart(2, "0")}:${match[2] || "00"}`;
 }
@@ -79,44 +78,66 @@ function categoryFromText(text: string) {
 }
 
 function serviceFromText(text: string) {
-  return SERVICE_ALIASES.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+  const value = lower(text);
+  if (value.includes("tutu") || value.includes("туту")) return "tutu";
+  if (value.includes("telegram") || value.includes("телеграм")) return "telegram";
+  if (value.includes("яндекс карт") || value.includes("карты") || value.includes("карту")) return "maps";
+  if (value.includes("переводчик")) return "translate";
+  if (value.includes("госуслуг")) return "gosuslugi";
+  if (value.includes("почт")) return "mail";
+  if (value.includes("календар")) return "calendar";
+  if (value.includes("банк")) return "bank";
+  return null;
 }
 
 function hasFutureCue(text: string) {
-  return Boolean(dateToken(text)) || /\b(?:через|на следующ|потом|вечером|утром|дн[её]м)\b/i.test(text);
+  return Boolean(dateToken(text)) || hasAny(text, ["через ", "на следующ", " потом", "вечером", "утром", "днём", "днем"]);
 }
 
 function monthFromText(text: string) {
-  const lower = text.toLocaleLowerCase("ru-RU");
-  return Object.keys(MONTHS).find((stem) => lower.includes(stem)) ?? null;
+  const value = lower(text);
+  return Object.keys(MONTHS).find((stem) => value.includes(stem)) ?? null;
 }
 
 function stripSchedulingPrefix(text: string) {
   return tidy(text
     .replace(/^\s*(?:сегодня|завтра)\s*/i, "")
-    .replace(/^\s*(?:в\s+)?(?:понедельник|понедельника|вторник|вторника|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье)\s*/i, "")
-    .replace(/\bпо работе\b/ig, "")
+    .replace(/^\s*(?:в\s+)?(?:понедельник|понедельника|вторник|вторника|среду|среда|четверг|четверга|пятницу|пятница|субботу|суббота|воскресенье)\s*/i, "")
+    .replace(/(?:^|\s)по работе(?=\s|$)/ig, " ")
     .replace(/\s+/g, " "));
+}
+
+function cleanupDocumentQuery(text: string) {
+  return tidy(
+    text
+      .replace(/^.*?(?:найди|покажи)\s+/i, "")
+      .replace(/(?:^|\s)(?:мой|мою|мои|мне)(?=\s|$)/ig, " ")
+  );
 }
 
 export function deterministicRoute(input: string): DeterministicRoute | null {
   const text = tidy(input);
-  const lower = text.toLocaleLowerCase("ru-RU");
+  const value = lower(text);
   if (!text) return null;
 
-  if (/^(?:глаша[,.]?\s*)?(?:открой|открыть)\b/i.test(text)) {
+  if (/^(?:глаша[,.]?\s*)?(?:открой|открыть)(?:\s|$)/i.test(text)) {
     const service = serviceFromText(text);
     if (service) return { kind: "open_service", service };
   }
 
-  if (/(?:какие|что).*(?:дела|задач|план|у меня).*(?:завтра|сегодня)|(?:что у меня завтра|что у меня сегодня)/i.test(text)) {
-    return { kind: "query_schedule", range: /завтра/i.test(text) ? "tomorrow" : "today" };
+  if (
+    ((value.includes("какие") || value.includes("что")) &&
+      (value.includes("дел") || value.includes("задач") || value.includes("план") || value.includes("у меня")) &&
+      (value.includes("завтра") || value.includes("сегодня")))
+  ) {
+    return { kind: "query_schedule", range: value.includes("завтра") ? "tomorrow" : "today" };
   }
 
-  if (/(?:найди|покажи).*(?:паспорт|документ|полис|страхов|договор|свидетельств|справк)/i.test(text)) {
-    const query = tidy(text
-      .replace(/^.*?(?:найди|покажи)\s+/i, "")
-      .replace(/\b(?:мой|мою|мои|мне)\b/ig, ""));
+  if (
+    (value.includes("найди") || value.includes("покажи")) &&
+    hasAny(value, ["паспорт", "документ", "полис", "страхов", "договор", "свидетельств", "справк"])
+  ) {
+    const query = cleanupDocumentQuery(text);
     return { kind: "find_document", query: query || "документ" };
   }
 
@@ -154,7 +175,7 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
     }
   }
 
-  if (/(?:сколько|какие).*потрат|расходы.*(?:за|в)/i.test(text)) {
+  if ((value.includes("сколько") || value.includes("расход")) && (value.includes("потрат") || value.includes("расход"))) {
     return {
       kind: "query_expenses",
       categorySlug: categoryFromText(text),
@@ -165,54 +186,67 @@ export function deterministicRoute(input: string): DeterministicRoute | null {
   const token = dateToken(text);
   const time = timeToken(text);
 
-  if (/(?:записан[аы]?|записал[аи]?сь)\s+(?:к|на)\s+врач|\bврач\b.*(?:завтра|сегодня|пятниц|сред|четверг|вторник|понедельник|суббот|воскрес)/i.test(text)) {
+  if (
+    hasAny(text, ["записана к врачу", "записан к врачу", "записалась к врачу", "записался к врачу", "приём у врача", "прием у врача"]) ||
+    (value.includes("врач") && Boolean(token) && Boolean(time))
+  ) {
     if (token) {
-      const doctorMatch = text.match(/(?:к|на)\s+(?:врачу|врач|при[её]м)(?:\s+([^,.]+?))?(?=\s+(?:сегодня|завтра|в\s+\d|в\s+(?:понедельник|вторник|сред|четверг|пятниц|суббот|воскрес))|$)/i);
+      const doctorMatch = text.match(/(?:к|у)\s+(?:врачу|врача|врач)(?:\s+([^,.]+?))?(?=\s+(?:сегодня|завтра|в\s+\d)|$)/i);
       const title = doctorMatch?.[1] ? `Врач: ${tidy(doctorMatch[1])}` : "Врач";
       return { kind: "create_appointment", title, dateToken: token, time };
     }
   }
 
-  if (/(?:была|был|сделал[аи]?|прошла|прош[её]л).*трениров|тренировал[асься]/i.test(text)) {
+  if (hasAny(text, ["была тренировка", "был на тренировке", "был тренировка", "тренировалась", "тренировался"])) {
     return { kind: "log_fitness", dateToken: token || "today", time };
   }
 
-  if (/начал[исьось]+.*месяч|начал[асься]+.*цикл|месячные\s+начал/i.test(lower)) {
+  if (hasAny(text, ["начались месячные", "начался цикл", "началась менструация", "месячные начались"])) {
     return { kind: "cycle_start", dateToken: token || "today" };
   }
 
-  if (/(?:могу\s+я|свободно\s+ли|есть\s+ли\s+окно).*(?:записаться|поставить|встретиться|в\s+\d)/i.test(text)) {
+  if (
+    (hasAny(text, ["могу я", "свободно ли", "есть ли окно"])) &&
+    hasAny(text, ["записаться", "поставить", "встретиться", " в "])
+  ) {
     if (token && time) return { kind: "check_availability", dateToken: token, time, durationMinutes: 60 };
   }
 
-  if (token && /\b(?:позвонить|отправить|сделать|купить|забрать|подготовить|написать|оплатить|пройти|заниматься)\b/i.test(text)) {
+  if (
+    token &&
+    hasAny(text, ["позвонить", "отправить", "сделать", "купить", "забрать", "подготовить", "написать", "оплатить", "пройти", "заниматься"])
+  ) {
     const title = stripSchedulingPrefix(text);
-    const work = /по работе|бухгалтер|клиент|договор|рабоч|офис|презентац/i.test(text);
+    const work = hasAny(text, ["по работе", "бухгалтер", "клиент", "договор", "рабоч", "офис", "презентац"]);
     return { kind: "create_task", title, area: work ? "work" : "personal", dateToken: token, time };
   }
 
-  if (/^найди\s+билет/i.test(text)) {
+  if (/^найди\s+билет(?:ы)?(?:\s|$)/i.test(text)) {
     const body = tidy(text.replace(/^найди\s+билет(?:ы)?\s*/i, ""));
     const routeMatch = body.match(/^(.+?)\s+[—–-]\s+(.+)$/);
     if (routeMatch) {
       const from = tidy(routeMatch[1]);
       let rest = tidy(routeMatch[2]);
       const travelDate = dateToken(rest);
-      const after = rest.match(/\bпосле\s+([01]?\d|2[0-3])(?::([0-5]\d))?/i);
+      const after = rest.match(/(?:^|\s)после\s+([01]?\d|2[0-3])(?::([0-5]\d))?(?=\s|$|[,.!?])/i);
       const afterTime = after ? `${String(Number(after[1])).padStart(2, "0")}:${after[2] || "00"}` : null;
       rest = tidy(rest
-        .replace(/\b(?:сегодня|завтра)\b/ig, "")
-        .replace(/\b(?:в\s+)?(?:понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье)\b/ig, "")
-        .replace(/\bпосле\s+([01]?\d|2[0-3])(?::[0-5]\d)?/ig, ""));
+        .replace(/(?:^|\s)(?:сегодня|завтра)(?=\s|$)/ig, " ")
+        .replace(/(?:^|\s)(?:в\s+)?(?:понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье)(?=\s|$)/ig, " ")
+        .replace(/(?:^|\s)после\s+([01]?\d|2[0-3])(?::[0-5]\d)?(?=\s|$)/ig, " "));
       if (from && rest && travelDate) {
         return { kind: "search_tickets", from, to: rest, dateToken: travelDate, afterTime };
       }
     }
   }
 
-  if (/разбери.*недел|стратег|план.*подготов|что.*сделать.*цели/i.test(text)) {
+  if (hasAny(text, ["разбери мою неделю", "стратег", "план подготовки", "что мне сделать для моей цели"])) {
     const goal = text.match(/(?:цели?|подготовк[аи]\s+к)\s+([A-Za-zА-Яа-яЁё0-9-]+)/i)?.[1] ?? null;
-    return { kind: "advice", goalTitle: goal, explicitDeep: /стратег|разбери.*недел|сравни|вариант/i.test(text) };
+    return {
+      kind: "advice",
+      goalTitle: goal,
+      explicitDeep: hasAny(text, ["стратег", "разбери мою неделю", "сравни", "вариант"]),
+    };
   }
 
   return null;
@@ -237,8 +271,11 @@ export function resolveDateToken(token: string, timezone: string) {
     return base.toISOString().slice(0, 10);
   }
 
-  const target = WEEKDAYS[token.toLocaleLowerCase("ru-RU")];
-  if (target == null) return today;
+  const value = lower(token);
+  const weekdayEntry = WEEKDAYS.find(([names]) => names.some((name) => value.includes(name)));
+  if (!weekdayEntry) return today;
+
+  const target = weekdayEntry[1];
   const current = base.getUTCDay();
   let delta = (target - current + 7) % 7;
   if (delta === 0) delta = 7;
@@ -248,8 +285,10 @@ export function resolveDateToken(token: string, timezone: string) {
 
 export function resolveMonthBounds(monthToken: string | null, timezone: string) {
   if (!monthToken) return null;
-  const stem = Object.keys(MONTHS).find((key) => monthToken.startsWith(key) || key.startsWith(monthToken));
+  const value = lower(monthToken);
+  const stem = Object.keys(MONTHS).find((key) => value.startsWith(key) || key.startsWith(value));
   if (!stem) return null;
+
   const month = MONTHS[stem];
   const year = Number(currentLocalDate(timezone).slice(0, 4));
   const start = `${year}-${String(month).padStart(2, "0")}-01`;
