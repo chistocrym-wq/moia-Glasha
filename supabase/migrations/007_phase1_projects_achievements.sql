@@ -108,65 +108,6 @@ create trigger glasha_guard_parent_completion
 before update of status on public.tasks
 for each row execute function public.glasha_guard_parent_completion();
 
-create or replace function public.glasha_sync_parent_progress()
-returns trigger
-language plpgsql
-set search_path = public
-as $$
-declare
-  parent_id uuid;
-  total_count integer;
-  done_count integer;
-begin
-  if tg_op = 'DELETE' then
-    parent_id := old.parent_task_id;
-  elsif tg_op = 'INSERT' then
-    parent_id := new.parent_task_id;
-  else
-    parent_id := coalesce(new.parent_task_id, old.parent_task_id);
-  end if;
-
-  if parent_id is null then
-    if tg_op = 'DELETE' then return old; else return new; end if;
-  end if;
-
-  select
-    count(*) filter (where status <> 'cancelled'),
-    count(*) filter (where status = 'done')
-  into total_count, done_count
-  from public.tasks
-  where parent_task_id = parent_id;
-
-  if total_count > 0 and done_count = total_count then
-    update public.tasks
-    set is_project = true,
-        status = 'done',
-        updated_at = now()
-    where id = parent_id
-      and status is distinct from 'done';
-  elsif total_count > 0 then
-    update public.tasks
-    set is_project = true,
-        status = case when status = 'done' then 'doing' else status end,
-        updated_at = now()
-    where id = parent_id
-      and (is_project is distinct from true or status = 'done');
-  else
-    update public.tasks
-    set is_project = false,
-        updated_at = now()
-    where id = parent_id and is_project is distinct from false;
-  end if;
-
-  if tg_op = 'DELETE' then return old; else return new; end if;
-end;
-$$;
-
-drop trigger if exists glasha_sync_parent_progress on public.tasks;
-create trigger glasha_sync_parent_progress
-after insert or delete or update of status, parent_task_id on public.tasks
-for each row execute function public.glasha_sync_parent_progress();
-
 create or replace function public.glasha_move_task_area(
   p_task_id uuid,
   p_area text,
@@ -267,7 +208,6 @@ as $$
 $$;
 
 revoke all on function public.glasha_guard_parent_completion() from public,anon,authenticated;
-revoke all on function public.glasha_sync_parent_progress() from public,anon,authenticated;
 revoke all on function public.glasha_move_task_area(uuid,text,boolean) from public,anon;
 revoke all on function public.glasha_list_root_tasks() from public,anon;
 grant execute on function public.glasha_move_task_area(uuid,text,boolean) to authenticated;
